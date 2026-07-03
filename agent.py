@@ -18,6 +18,12 @@ ROOT = Path(__file__).resolve().parent
 # Enable ANSI escape codes on Windows (no-op on Unix)
 if sys.platform == "win32":
     os.system("")
+    # Force UTF-8 output so the ✓/✗/→ glyphs don't crash on cp1252 consoles
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except AttributeError:
+            pass
 
 # ── colours ──────────────────────────────────────────────────────────────────
 GREEN  = "\033[32m"
