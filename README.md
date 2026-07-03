@@ -1,8 +1,10 @@
-# Zero Shot SDD Harness for Building Agents
+# Local-first Data Analysis Agent
 
-Give it a one-line idea. Walk away with a working, tested, phased agent.
+A single-user, local-first data analysis agent. Upload a CSV, ask a question in plain English, and get a correct plain-language answer with the key numbers — plus the exact pandas code the agent ran and a live step-by-step trace.
 
-A lean, Claude-Code-native harness for building agentic software **spec-first**. One person with an idea and one API key can drive a real, production-shaped agent into existence — and a senior engineer opening the result finds a conventional, reviewable stack, not generated mush.
+**The privacy invariant (the whole point):** only the dataset's **schema (column names + dtypes) and a bounded number of sample rows** ever reach the Anthropic API. Claude writes pandas code from that alone; the code executes **locally against your full dataset**. Raw data never leaves your machine. This is enforced at a single choke point (`src/analysis/privacy.py`) and covered by a payload-capture test.
+
+Built on the spec-driven harness below (FastAPI + LangGraph + SQLite + Anthropic).
 
 ---
 
@@ -114,40 +116,91 @@ agent.py            ← verify setup (default); --run to start the server
 .env.example
 ```
 
-**Capability slot** — the three files to replace for your agent:
-- `src/graph/nodes.py` — replace `transform_text` with your logic
-- `src/prompts/transform.md` — replace with your system prompt
-- `frontend/src/app/page.tsx` — replace the transform form with your UI
+**The analysis pipeline** (Phase 1, replacing the baseline `transform_text` slot):
+- `src/analysis/` — `store.py` (upload/profile/load), `privacy.py` (the LLM choke point), `executor.py` (restricted local pandas execution)
+- `src/graph/` — the LangGraph `plan → generate_code → execute_locally → verify → answer` graph + SSE runner
+- `src/api/` — `datasets.py` (upload), `analyses.py` (SSE ask + history)
+- `src/prompts/` — `plan.md`, `generate_code.md`, `answer.md`
+- `frontend/src/app/page.tsx` — the chat UI
 
 Everything else (graph wiring, API, DB, settings, tests) is already working.
 
 ---
 
-## Running the Baseline
+## Running the Data Analysis Agent
+
+All commands run from the **repo root**.
 
 ```bash
 cp .env.example .env
-# edit .env: set exactly ONE provider key —
-#   AGENT_ANTHROPIC_API_KEY=<your key>   or   AGENT_GEMINI_API_KEY=<your key>
-# the provider is auto-detected from whichever key is set
-uv sync
-python agent.py                        # verify tools, .env, deps, tests (default)
-python agent.py --run                  # migrations + frontend build + start server
+# edit .env: set your Anthropic key —
+#   AGENT_ANTHROPIC_API_KEY=<your key>
+# (the provider is auto-detected from whichever key is set)
+uv sync --extra dev                    # install deps incl. pandas, numpy, pytest
+
+uv run alembic upgrade head            # create the SQLite tables (datasets, analysis_runs)
+cd frontend && pnpm install && pnpm build && cd ..   # build the static UI into frontend/out
+uv run python -m src                   # start FastAPI + the UI on port 8001
 ```
 
-Once running:
+Then open **`http://localhost:8001/app/`**, upload a CSV, and ask a question
+(e.g. "What is the total revenue by region?"). You will see live step chips
+(Planning → Writing code → Running locally → Verifying → Answering), a
+plain-language answer, and a collapsible panel with the exact pandas code.
 
 | URL | What |
 |-----|------|
-| `http://localhost:8001/app/` | **UI** — transform form (the capability slot) |
+| `http://localhost:8001/app/` | **UI** — upload → ask → answer |
 | `http://localhost:8001/health` | API health check |
 | `http://localhost:8001/docs` | Interactive API docs (Swagger) |
+
+### Key endpoints (Phase 1)
+
+- `POST /datasets` — multipart CSV upload; returns the schema+sample profile.
+- `POST /analyses` — `{dataset_id, question}`; streams SSE `step` events then a terminal `done` (or `error`).
+- `GET /analyses/{run_id}` — a persisted run (question, code, result summary, answer, trace).
+- `GET /analyses?dataset_id=&limit=` — run history, newest first.
+
+### Key endpoints (Phase 2)
+
+- `POST /analyses` now accepts an optional `want_chart` flag; when set (or when the
+  result is naturally chartable) the run emits a **Vega-Lite v5** `chart_spec` with
+  bounded inline data. The chart prompt is built ONLY from the schema + the bounded
+  result summary — raw data never reaches it.
+- `GET /datasets/{dataset_id}/profile` — rich per-column LOCAL profile (null/distinct
+  counts, numeric min/max/mean, categorical top values) plus 2–3 LLM-suggested
+  follow-up questions. The profile is computed locally and never sent to the LLM; the
+  follow-up call goes through the same schema+samples privacy choke point.
+- `GET /cost/today` — sums today's per-query prompt/completion tokens and USD cost
+  across analysis runs (recorded from the real Anthropic `usage`).
+- `GET /analyses/{run_id}/export?kind=csv|parquet|code|report` — download a run's
+  output. `csv`/`parquet` RE-EXECUTE the stored code locally against the FULL dataset
+  (the complete derived result, not the bounded summary); `code` returns the exact
+  generated pandas; `report` is a self-contained HTML report with the answer, result
+  table, and an embedded Vega-Lite chart when one exists.
+
+### Environment variables (`AGENT_` prefix)
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `AGENT_ANTHROPIC_API_KEY` | — | Anthropic key (required) |
+| `AGENT_LLM_MODEL` | `claude-sonnet-4-6` | Override the model |
+| `AGENT_SAMPLE_ROWS` | `5` | Max sample rows sent to the LLM |
+| `AGENT_SAMPLE_CELL_CHARS` | `200` | Per-cell char cap on samples/results |
+| `AGENT_RESULT_ROWS` | `20` | Max rows in a bounded result summary |
+| `AGENT_EXEC_TIMEOUT` | `30` | Wall-clock timeout (s) for local code |
+| `AGENT_MAX_RETRIES` | `3` | Refine loops before best-guess-with-flag |
+| `AGENT_MAX_UPLOAD_MB` | `500` | Reject uploads larger than this |
+| `AGENT_UPLOADS_DIR` | `./data/uploads` | On-disk raw-file store (git-ignored) |
+
+Set `LANGCHAIN_TRACING_V2=true` (+ `LANGCHAIN_API_KEY`) to enable LangSmith
+tracing; otherwise tracing is a no-op and each run is logged to stdout.
 
 Tests:
 
 ```bash
-uv run pytest tests/unit/ -v          # no key needed
-uv run pytest tests/ -v               # requires real key in .env
+uv run pytest tests/unit/ -q          # no key needed
+uv run pytest tests/ -q               # requires real Anthropic key in .env
 ```
 
 ---

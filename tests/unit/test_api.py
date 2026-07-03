@@ -1,6 +1,13 @@
-"""API contract tests — no LLM key required, graph is not invoked."""
-import pytest
-from unittest.mock import patch
+"""API contract tests — no LLM key required (graph is not invoked)."""
+import io
+
+import pandas as pd
+
+
+def _csv_upload(client, n_rows: int = 4):
+    df = pd.DataFrame({"region": ["W", "E"] * n_rows, "revenue": [10.0, 20.0] * n_rows})
+    files = {"file": ("sales.csv", df.to_csv(index=False).encode("utf-8"), "text/csv")}
+    return client.post("/datasets", files=files)
 
 
 def test_health(api_client):
@@ -9,37 +16,46 @@ def test_health(api_client):
     assert r.json()["data"]["status"] == "ok"
 
 
-def test_run_returns_200_with_output(api_client, _isolated_db):
-    from sqlalchemy.orm import Session
-    from db.models import RunRow
-
-    # Pre-insert a completed run so run_agent just returns its id
-    with Session(_isolated_db) as s:
-        row = RunRow(input_text="test", status="completed", output_text="Hello from mock LLM")
-        s.add(row)
-        s.commit()
-        run_id = row.id
-
-    with patch("api.runs.run_agent", return_value=run_id):
-        r = api_client.post("/runs", json={"input_text": "test"})
-
+def test_upload_csv_returns_profile(api_client):
+    r = _csv_upload(api_client, n_rows=3)
     assert r.status_code == 200
-    data = r.json()
-    assert data["data"]["output_text"] == "Hello from mock LLM"
+    data = r.json()["data"]
+    assert data["row_count"] == 6
+    assert [c["name"] for c in data["columns"]] == ["region", "revenue"]
+    assert len(data["sample_rows"]) <= 5
+    assert data["dataset_id"]
 
 
-def test_run_missing_body(api_client):
-    r = api_client.post("/runs", json={})
-    assert r.status_code == 422
+def test_upload_non_csv_rejected(api_client):
+    files = {"file": ("notes.txt", b"hello", "text/plain")}
+    r = api_client.post("/datasets", files=files)
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "BAD_REQUEST"
 
 
-def test_get_run_not_found(api_client):
-    r = api_client.get("/runs/nonexistent-id")
+def test_upload_empty_file_rejected(api_client):
+    files = {"file": ("empty.csv", b"", "text/csv")}
+    r = api_client.post("/datasets", files=files)
+    assert r.status_code == 400
+
+
+def test_analyses_unknown_dataset_rejected(api_client):
+    r = api_client.post("/analyses", json={"dataset_id": "nope", "question": "hi"})
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "BAD_REQUEST"
+
+
+def test_analyses_empty_question_rejected(api_client):
+    r = api_client.post("/analyses", json={"dataset_id": "x", "question": ""})
+    assert r.status_code == 422  # pydantic min_length
+
+
+def test_get_analysis_not_found(api_client):
+    r = api_client.get("/analyses/does-not-exist")
     assert r.status_code == 404
 
 
-def test_run_empty_input_rejected(api_client):
-    r = api_client.post("/runs", json={"input_text": ""})
-    # empty string is technically valid JSON — server accepts it; LLM handles it
-    # just confirm we get a structured response
-    assert r.status_code in (200, 422, 500)
+def test_list_analyses_empty(api_client):
+    r = api_client.get("/analyses")
+    assert r.status_code == 200
+    assert r.json()["data"] == []

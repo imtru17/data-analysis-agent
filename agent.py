@@ -18,6 +18,12 @@ ROOT = Path(__file__).resolve().parent
 # Enable ANSI escape codes on Windows (no-op on Unix)
 if sys.platform == "win32":
     os.system("")
+    # Force UTF-8 output so the ✓/✗/→ glyphs don't crash on cp1252 consoles
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except AttributeError:
+            pass
 
 # ── colours ──────────────────────────────────────────────────────────────────
 GREEN  = "\033[32m"
@@ -38,8 +44,14 @@ _failures: list[str] = []
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 def run(cmd: list[str], *, cwd: Path = ROOT, capture: bool = True) -> subprocess.CompletedProcess:
+    # Resolve the executable via PATH (respects PATHEXT, so .cmd/.bat wrappers like
+    # pnpm are found). On Windows, CreateProcess can't launch .cmd/.bat directly —
+    # those must go through the shell — so flag that case.
+    exe = shutil.which(cmd[0]) or cmd[0]
+    argv = [exe, *cmd[1:]]
+    use_shell = sys.platform == "win32" and exe.lower().endswith((".cmd", ".bat"))
     try:
-        return subprocess.run(cmd, cwd=cwd, capture_output=capture, text=True)
+        return subprocess.run(argv, cwd=cwd, capture_output=capture, text=True, shell=use_shell)
     except OSError:
         return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="")
 

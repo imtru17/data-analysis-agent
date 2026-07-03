@@ -1,3 +1,8 @@
-from domain.run import RunRequest, RunResponse
+from domain.analysis import (
+    AnalyzeRequest,
+    DatasetProfile,
+    RunDetail,
+    RunListItem,
+)
 
-__all__ = ["RunRequest", "RunResponse"]
+__all__ = ["AnalyzeRequest", "DatasetProfile", "RunDetail", "RunListItem"]

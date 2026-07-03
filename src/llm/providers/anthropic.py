@@ -9,12 +9,28 @@ class AnthropicProvider:
         self._model = model or self.DEFAULT_MODEL
 
     def call_model(self, prompt: str, *, system: str | None = None) -> str:
+        text, _usage = self.call_with_usage(prompt, system=system)
+        return text
+
+    def call_with_usage(
+        self, prompt: str, *, system: str | None = None
+    ) -> tuple[str, dict]:
+        """Return (text, {"prompt_tokens", "completion_tokens"}) from the real
+        Anthropic response usage."""
         kwargs: dict = dict(
             model=self._model,
-            max_tokens=1024,
+            max_tokens=2048,
             messages=[{"role": "user", "content": prompt}],
         )
         if system:
             kwargs["system"] = system
         msg = self._client.messages.create(**kwargs)
-        return msg.content[0].text
+        text = "".join(
+            block.text for block in msg.content if getattr(block, "type", None) == "text"
+        )
+        usage = getattr(msg, "usage", None)
+        usage_dict = {
+            "prompt_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+            "completion_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+        }
+        return text, usage_dict
