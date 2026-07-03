@@ -7,6 +7,7 @@ from graph.nodes import (
     execute_locally,
     verify,
     answer,
+    chart_spec,
     finalize,
     handle_error,
 )
@@ -16,6 +17,7 @@ from graph.edges import (
     after_generate,
     after_execute,
     after_verify,
+    after_answer,
 )
 
 
@@ -27,6 +29,7 @@ def _build_graph():
         ("execute_locally", execute_locally),
         ("verify", verify),
         ("answer", answer),
+        ("chart_spec", chart_spec),
         ("finalize", finalize),
         ("handle_error", handle_error),
     ]:
@@ -52,7 +55,11 @@ def _build_graph():
         "verify", after_verify,
         {"generate_code": "generate_code", "answer": "answer"},
     )
-    g.add_edge("answer", "finalize")
+    g.add_conditional_edges(
+        "answer", after_answer,
+        {"chart_spec": "chart_spec", "finalize": "finalize"},
+    )
+    g.add_edge("chart_spec", "finalize")
     g.add_edge("finalize", END)
     g.add_edge("handle_error", END)
     return g.compile()

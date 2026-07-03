@@ -6,7 +6,7 @@ State mutation (retry_count increment, low_confidence) happens in the nodes.
 from __future__ import annotations
 
 from config.settings import get_settings
-from graph.nodes import is_trivial_question
+from graph.nodes import is_chartable, is_trivial_question
 from graph.state import AgentState
 
 
@@ -49,3 +49,13 @@ def after_verify(state: AgentState) -> str:
     if state.get("retry_count", 0) < max_retries:
         return "generate_code"
     return "answer"
+
+
+def after_answer(state: AgentState) -> str:
+    """Conditionally route to the chart node.
+
+    Charts when the request forced it (``want_chart``) or the result is
+    naturally chartable; otherwise go straight to finalize."""
+    if state.get("want_chart") or is_chartable(state):
+        return "chart_spec"
+    return "finalize"

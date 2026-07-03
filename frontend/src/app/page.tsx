@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   streamAnalysis,
+  fetchTodayCost,
   NetworkError,
   ApiError,
   type DatasetProfile,
@@ -29,8 +30,22 @@ export default function Home() {
   const [uploading, setUploading] = useState(false)
   const [inFlight, setInFlight] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const [wantChart, setWantChart] = useState(false)
+  const [todayCost, setTodayCost] = useState<number | null>(null)
 
   const datasetRef = useRef<DatasetProfile | null>(null)
+  const wantChartRef = useRef(false)
+
+  const refreshTodayCost = useCallback(async () => {
+    const cost = await fetchTodayCost()
+    if (cost) setTodayCost(cost.cost_usd)
+  }, [])
+
+  // Load today's running total on mount.
+  useEffect(() => {
+    void refreshTodayCost()
+  }, [refreshTodayCost])
 
   const patchAgent = useCallback((id: string, patch: (m: AgentMessage) => AgentMessage) => {
     setMessages(prev =>
@@ -52,8 +67,13 @@ export default function Home() {
     setToast("Can't reach the server — is it running on :8001?")
   }, [])
 
+  const setChartToggle = useCallback((on: boolean) => {
+    setWantChart(on)
+    wantChartRef.current = on
+  }, [])
+
   const handleSend = useCallback(
-    async (question: string) => {
+    async (question: string, chart: boolean) => {
       const ds = datasetRef.current
       if (!ds || inFlight) return
 
@@ -76,27 +96,41 @@ export default function Home() {
       setInFlight(true)
 
       try {
-        await streamAnalysis(ds.dataset_id, question, {
-          onStep: (ev: StepEvent) =>
-            patchAgent(agentId, m => ({ ...m, chips: applyStep(m.chips, ev.step, ev.status) })),
-          onDone: (ev: DoneEvent) =>
-            patchAgent(agentId, m => ({
-              ...m,
-              status: 'completed',
-              chips: m.chips.map(c => (c.status === 'running' || c.status === 'pending' ? { ...c, status: 'done' } : c)),
-              answer: ev.answer ?? '',
-              code: ev.generated_code ?? '',
-              lowConfidence: Boolean(ev.low_confidence),
-              lowConfidenceNote: ev.low_confidence_note,
-            })),
-          onError: (ev: StreamErrorEvent) =>
-            patchAgent(agentId, m => ({
-              ...m,
-              status: 'failed',
-              chips: markError(m.chips),
-              errorText: ev.message,
-            })),
-        })
+        await streamAnalysis(
+          ds.dataset_id,
+          question,
+          {
+            onStep: (ev: StepEvent) =>
+              patchAgent(agentId, m => ({ ...m, chips: applyStep(m.chips, ev.step, ev.status) })),
+            onDone: (ev: DoneEvent) => {
+              patchAgent(agentId, m => ({
+                ...m,
+                status: 'completed',
+                chips: m.chips.map(c =>
+                  c.status === 'running' || c.status === 'pending' ? { ...c, status: 'done' } : c,
+                ),
+                answer: ev.answer ?? '',
+                code: ev.generated_code ?? '',
+                lowConfidence: Boolean(ev.low_confidence),
+                lowConfidenceNote: ev.low_confidence_note,
+                runId: ev.run_id,
+                tokens: ev.tokens,
+                costUsd: ev.cost_usd,
+                chartSpec: ev.chart_spec ?? null,
+              }))
+              // Refresh the running daily total after a completed run.
+              void refreshTodayCost()
+            },
+            onError: (ev: StreamErrorEvent) =>
+              patchAgent(agentId, m => ({
+                ...m,
+                status: 'failed',
+                chips: markError(m.chips),
+                errorText: ev.message,
+              })),
+          },
+          { want_chart: chart },
+        )
       } catch (err) {
         if (err instanceof NetworkError) {
           handleNetworkError()
@@ -119,12 +153,23 @@ export default function Home() {
         setInFlight(false)
       }
     },
-    [inFlight, patchAgent, handleNetworkError],
+    [inFlight, patchAgent, handleNetworkError, refreshTodayCost],
+  )
+
+  // A follow-up chip fills the composer with the question and sends it.
+  const handleFollowup = useCallback(
+    (question: string) => {
+      if (!datasetRef.current || inFlight) return
+      setDraft(question)
+      void handleSend(question, wantChartRef.current)
+      setDraft('')
+    },
+    [inFlight, handleSend],
   )
 
   return (
     <div className="flex h-screen flex-col bg-gray-50">
-      <Header />
+      <Header todayCost={todayCost} />
 
       <div className="mx-auto flex w-full max-w-6xl flex-1 overflow-hidden">
         <main className="flex flex-1 flex-col overflow-hidden">
@@ -139,9 +184,21 @@ export default function Home() {
             />
           </div>
 
-          <MessageThread messages={messages} />
+          <MessageThread
+            messages={messages}
+            onFollowup={handleFollowup}
+            followupsDisabled={inFlight}
+          />
 
-          <Composer onSend={question => void handleSend(question)} hasDataset={dataset !== null} inFlight={inFlight} />
+          <Composer
+            value={draft}
+            onValueChange={setDraft}
+            onSend={(question, chart) => void handleSend(question, chart)}
+            hasDataset={dataset !== null}
+            inFlight={inFlight}
+            wantChart={wantChart}
+            onToggleChart={setChartToggle}
+          />
         </main>
 
         <ComingSoonRail />

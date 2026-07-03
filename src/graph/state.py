@@ -9,6 +9,7 @@ class AgentState(TypedDict, total=False):
     # Input
     question: str
     dataset_meta: dict          # {dataset_id, filename, columns, dtypes, sample_rows, row_count} — schema+samples ONLY
+    want_chart: bool            # request-level flag: force chart generation
 
     # Pipeline data (populated progressively by nodes)
     is_trivial: bool
@@ -21,6 +22,7 @@ class AgentState(TypedDict, total=False):
 
     # Output
     answer: str
+    chart_spec: dict | None     # Vega-Lite v5 spec with bounded inline data (or None)
     step_trace: list            # [{step, status, detail, ts}]
     tokens: dict                # {prompt, completion}
     cost_usd: float

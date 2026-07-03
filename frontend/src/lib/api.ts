@@ -10,13 +10,47 @@ export interface Column {
   dtype: string
 }
 
+// Phase-2 richer per-column profile. All statistical fields are optional so the
+// UI degrades gracefully if the backend omits any of them for a given column.
+export interface ColumnProfile extends Column {
+  null_count?: number
+  distinct?: number
+  min?: number | string | null
+  max?: number | string | null
+  mean?: number | null
+  top?: unknown
+}
+
 export interface DatasetProfile {
   dataset_id: string
   filename: string
   row_count: number
-  columns: Column[]
+  columns: ColumnProfile[]
   sample_rows: Record<string, unknown>[]
+  /** Phase-2 auto-suggested follow-up questions (may be empty). */
+  followups?: string[]
 }
+
+/** Response shape of GET /datasets/{id}/profile (Phase 2). */
+export interface RichProfile {
+  profile: {
+    row_count: number
+    columns: ColumnProfile[]
+  }
+  followups: string[]
+}
+
+/** Response shape of GET /cost/today (Phase 2). */
+export interface TodayCost {
+  date: string
+  cost_usd: number
+  prompt_tokens: number
+  completion_tokens: number
+  run_count: number
+}
+
+/** A Vega-Lite v5 JSON spec (or null when the answer has no chart). */
+export type ChartSpec = Record<string, unknown>
 
 export type StepStatus = 'running' | 'done'
 
@@ -43,6 +77,8 @@ export interface DoneEvent {
   low_confidence_note?: string
   tokens?: Tokens
   cost_usd?: number
+  /** Phase-2: a Vega-Lite spec to render below the answer, or null. */
+  chart_spec?: ChartSpec | null
 }
 
 export interface StreamErrorEvent {
@@ -116,6 +152,44 @@ export async function uploadDataset(file: File): Promise<DatasetProfile> {
   return body.data
 }
 
+/**
+ * Fetch the richer auto-profile + follow-up suggestions for a dataset.
+ * GET /datasets/{id}/profile (Phase 2). Returns null on any failure so an upload
+ * still succeeds even if the profile endpoint is unavailable.
+ */
+export async function fetchProfile(datasetId: string): Promise<RichProfile | null> {
+  try {
+    const res = await fetch(`/datasets/${datasetId}/profile`)
+    if (!res.ok) return null
+    const body = (await res.json()) as { data: RichProfile; error: null }
+    return body.data ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fetch today's running token/cost total. GET /cost/today (Phase 2).
+ * Returns null on failure so the header simply shows $0.00 rather than erroring.
+ */
+export async function fetchTodayCost(): Promise<TodayCost | null> {
+  try {
+    const res = await fetch('/cost/today')
+    if (!res.ok) return null
+    const body = (await res.json()) as { data: TodayCost; error: null }
+    return body.data ?? null
+  } catch {
+    return null
+  }
+}
+
+export type ExportKind = 'csv' | 'parquet' | 'code' | 'report'
+
+/** Build the download URL for an analysis export (Phase 2). Origin-root path. */
+export function exportUrl(runId: string, kind: ExportKind): string {
+  return `/analyses/${encodeURIComponent(runId)}/export?kind=${kind}`
+}
+
 interface SseFrame {
   event: string
   data: string
@@ -178,13 +252,17 @@ export async function streamAnalysis(
   dataset_id: string,
   question: string,
   handlers: StreamHandlers,
+  options: { want_chart?: boolean } = {},
 ): Promise<void> {
+  const body: Record<string, unknown> = { dataset_id, question }
+  if (options.want_chart) body.want_chart = true
+
   let res: Response
   try {
     res = await fetch('/analyses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ dataset_id, question }),
+      body: JSON.stringify(body),
     })
   } catch {
     throw new NetworkError()

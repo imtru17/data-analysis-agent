@@ -161,6 +161,24 @@ plain-language answer, and a collapsible panel with the exact pandas code.
 - `GET /analyses/{run_id}` — a persisted run (question, code, result summary, answer, trace).
 - `GET /analyses?dataset_id=&limit=` — run history, newest first.
 
+### Key endpoints (Phase 2)
+
+- `POST /analyses` now accepts an optional `want_chart` flag; when set (or when the
+  result is naturally chartable) the run emits a **Vega-Lite v5** `chart_spec` with
+  bounded inline data. The chart prompt is built ONLY from the schema + the bounded
+  result summary — raw data never reaches it.
+- `GET /datasets/{dataset_id}/profile` — rich per-column LOCAL profile (null/distinct
+  counts, numeric min/max/mean, categorical top values) plus 2–3 LLM-suggested
+  follow-up questions. The profile is computed locally and never sent to the LLM; the
+  follow-up call goes through the same schema+samples privacy choke point.
+- `GET /cost/today` — sums today's per-query prompt/completion tokens and USD cost
+  across analysis runs (recorded from the real Anthropic `usage`).
+- `GET /analyses/{run_id}/export?kind=csv|parquet|code|report` — download a run's
+  output. `csv`/`parquet` RE-EXECUTE the stored code locally against the FULL dataset
+  (the complete derived result, not the bounded summary); `code` returns the exact
+  generated pandas; `report` is a self-contained HTML report with the answer, result
+  table, and an embedded Vega-Lite chart when one exists.
+
 ### Environment variables (`AGENT_` prefix)
 
 | Var | Default | Purpose |

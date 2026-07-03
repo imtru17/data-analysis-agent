@@ -31,6 +31,12 @@ class DatasetRow(Base):
     row_count: Mapped[int] = mapped_column(Integer, nullable=False)
     schema_json: Mapped[str] = mapped_column(Text, nullable=False)
     sample_rows_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # Phase 2 — richer LOCAL profile (per-column stats) + LLM follow-up
+    # suggestions. Both computed once and cached so they are not regenerated on
+    # every profile fetch. profile_json is computed locally and NEVER sent to
+    # the LLM; followups_json comes from a schema+samples-only LLM call.
+    profile_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    followups_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, default=_now
@@ -56,6 +62,8 @@ class AnalysisRunRow(Base):
     low_confidence: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     step_trace_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Phase 2 — optional Vega-Lite v5 chart spec (JSON) with bounded inline data.
+    chart_spec_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

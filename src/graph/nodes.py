@@ -7,6 +7,7 @@ inside ``execute_locally`` and never placed in state.
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -247,6 +248,114 @@ def answer(state: AgentState) -> AgentState:
         }
     except Exception as exc:  # noqa: BLE001
         return {**state, "error": f"answer failed: {exc}"}
+
+
+def is_chartable(state: AgentState) -> bool:
+    """Decide whether the chart_spec node should run.
+
+    Charts when the user asked for one (``want_chart``) OR the result is
+    naturally chartable — a non-empty grouped/aggregated table or series.
+    Scalars, empty results, and failed runs are never charted.
+    """
+    if state.get("error"):
+        return False
+    exec_result = state.get("execution_result") or {}
+    summary = exec_result.get("result_summary") or {}
+    kind = summary.get("kind")
+    if kind not in ("dataframe", "series"):
+        return False
+    if not summary.get("rows"):
+        return False
+    return True
+
+
+def _validate_vega_spec(spec: object, max_rows: int) -> dict | None:
+    """Return the spec if it is a usable Vega-Lite object, else None.
+
+    Requires a `mark` and an `encoding`, and enforces the privacy bound: any
+    inline `data.values` must not exceed ``max_rows`` rows (defense-in-depth —
+    the model only ever saw the bounded summary)."""
+    if not isinstance(spec, dict):
+        return None
+    if "mark" not in spec or "encoding" not in spec:
+        return None
+    data = spec.get("data")
+    if isinstance(data, dict) and isinstance(data.get("values"), list):
+        if len(data["values"]) > max_rows:
+            data["values"] = data["values"][:max_rows]
+    return spec
+
+
+def _extract_json(text: str) -> object | None:
+    text = text.strip()
+    # Strip an accidental code fence.
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if fence:
+        text = fence.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def chart_spec(state: AgentState) -> AgentState:
+    """Emit a Vega-Lite v5 chart spec from schema + the BOUNDED result summary.
+
+    Prompt built ONLY via the privacy choke point (never raw data). Degrades
+    gracefully: on any failure the run continues with no chart (not an error).
+    """
+    exec_result = state.get("execution_result") or {}
+    result_summary = exec_result.get("result_summary")
+    max_rows = get_settings().result_rows
+    # No usable result → no chart, no LLM call (e.g. want_chart forced on a
+    # scalar/failed result). Degrade quietly.
+    if not result_summary or result_summary.get("kind") not in ("dataframe", "series"):
+        return {
+            **state,
+            "chart_spec": None,
+            "step_trace": _trace(state, "chart_spec", "done", "No chart (result not chartable)"),
+        }
+    try:
+        ctx = privacy.build_context(
+            state["dataset_meta"],
+            question=state.get("question", ""),
+            result_summary=result_summary,
+        )
+        system = _load_prompt("chart.md")
+        with timed_llm_call("chart_spec", state.get("run_id", "")) as usage:
+            text, u = LLMClient().call_with_usage(privacy.render_context(ctx), system=system)
+            usage.update(u)
+        tokens, cost = _accumulate_usage(state, u)
+        spec = _validate_vega_spec(_extract_json(text), max_rows)
+        if spec is None:
+            return {
+                **state,
+                "chart_spec": None,
+                "tokens": tokens,
+                "cost_usd": cost,
+                "step_trace": _trace(
+                    state, "chart_spec", "done", "No chart (result not chartable)"
+                ),
+            }
+        return {
+            **state,
+            "chart_spec": spec,
+            "tokens": tokens,
+            "cost_usd": cost,
+            "step_trace": _trace(state, "chart_spec", "done", "Built a chart"),
+        }
+    except Exception as exc:  # noqa: BLE001 — charting never fails the run
+        return {
+            **state,
+            "chart_spec": None,
+            "step_trace": _trace(state, "chart_spec", "done", f"Chart skipped: {exc}"),
+        }
 
 
 def finalize(state: AgentState) -> AgentState:

@@ -22,6 +22,7 @@ _STEP_LABELS = {
     "execute_locally": "Running locally",
     "verify": "Verifying",
     "answer": "Answering",
+    "chart_spec": "Charting",
 }
 
 
@@ -51,12 +52,15 @@ def _create_run_row(dataset_id: str, question: str) -> str:
         return run.id
 
 
-def _initial_state(run_id: str, dataset_id: str, question: str, dataset_meta: dict) -> AgentState:
+def _initial_state(
+    run_id: str, dataset_id: str, question: str, dataset_meta: dict, want_chart: bool
+) -> AgentState:
     return {
         "run_id": run_id,
         "dataset_id": dataset_id,
         "question": question,
         "dataset_meta": dataset_meta,
+        "want_chart": want_chart,
         "retry_count": 0,
         "low_confidence": False,
         "step_trace": [],
@@ -83,6 +87,8 @@ def _persist_final(run_id: str, state: AgentState) -> None:
         run.low_confidence = bool(state.get("low_confidence", False))
         run.retry_count = int(state.get("retry_count", 0))
         run.step_trace_json = json.dumps(state.get("step_trace", []))
+        chart = state.get("chart_spec")
+        run.chart_spec_json = json.dumps(chart) if chart is not None else None
         run.prompt_tokens = int(tokens.get("prompt", 0))
         run.completion_tokens = int(tokens.get("completion", 0))
         run.cost_usd = float(state.get("cost_usd", 0.0))
@@ -98,6 +104,7 @@ def _done_payload(run_id: str, state: AgentState) -> dict:
         "answer": state.get("answer", ""),
         "generated_code": state.get("generated_code", ""),
         "result_summary": exec_result.get("result_summary"),
+        "chart_spec": state.get("chart_spec"),
         "step_trace": state.get("step_trace", []),
         "low_confidence": bool(state.get("low_confidence", False)),
         "tokens": {"prompt": tokens.get("prompt", 0), "completion": tokens.get("completion", 0)},
@@ -105,7 +112,9 @@ def _done_payload(run_id: str, state: AgentState) -> dict:
     }
 
 
-def stream_analysis(dataset_id: str, question: str) -> Iterator[dict]:
+def stream_analysis(
+    dataset_id: str, question: str, want_chart: bool = False
+) -> Iterator[dict]:
     """Yield SSE event dicts: {"event": "step"|"done"|"error", "data": {...}}.
 
     Raises ``DatasetNotFound`` before any event if the dataset is unknown, so
@@ -113,7 +122,7 @@ def stream_analysis(dataset_id: str, question: str) -> Iterator[dict]:
     """
     dataset_meta = _load_dataset_meta(dataset_id)   # may raise DatasetNotFound
     run_id = _create_run_row(dataset_id, question)
-    initial = _initial_state(run_id, dataset_id, question, dataset_meta)
+    initial = _initial_state(run_id, dataset_id, question, dataset_meta, want_chart)
 
     accumulated: AgentState = dict(initial)
     try:
@@ -163,11 +172,11 @@ def stream_analysis(dataset_id: str, question: str) -> Iterator[dict]:
         yield {"event": "done", "data": _done_payload(run_id, accumulated)}
 
 
-def run_analysis(dataset_id: str, question: str) -> dict:
+def run_analysis(dataset_id: str, question: str, want_chart: bool = False) -> dict:
     """Non-streaming helper (used by integration tests). Returns the terminal
     payload dict, with an extra ``run_id`` key."""
     terminal: dict = {}
-    for event in stream_analysis(dataset_id, question):
+    for event in stream_analysis(dataset_id, question, want_chart):
         if event["event"] in ("done", "error"):
             terminal = event["data"]
     return terminal

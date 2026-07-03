@@ -1,6 +1,6 @@
 // Discriminated union of everything that can appear in the chat thread.
 
-import type { DatasetProfile } from './api'
+import type { ChartSpec, DatasetProfile, Tokens } from './api'
 import type { StepChip } from './steps'
 
 export interface UserMessage {
@@ -34,6 +34,11 @@ export interface AgentMessage {
   lowConfidence: boolean
   lowConfidenceNote?: string
   errorText?: string
+  /** Phase-2: the run id (for exports), token/cost accounting, and chart spec. */
+  runId?: string
+  tokens?: Tokens
+  costUsd?: number
+  chartSpec?: ChartSpec | null
 }
 
 export type ChatMessage = UserMessage | ProfileMsg | SystemMsg | AgentMessage

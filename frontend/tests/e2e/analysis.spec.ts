@@ -70,16 +70,14 @@ test('upload a CSV, ask a question, watch steps, read the answer, inspect the co
   expect(code).toContain('result')
 })
 
-test('labelled stubs are visibly inert, not broken', async ({ page }) => {
+test('still-deferred stubs are visibly inert, not broken', async ({ page }) => {
   await page.goto('/app/')
 
-  // Header stubs.
-  await expect(page.getByTestId('today-cost')).toHaveAttribute('aria-disabled', 'true')
+  // History remains a labelled stub (Phase 3). The "Today:" cost is now REAL.
   await expect(page.getByTestId('history-button')).toHaveAttribute('aria-disabled', 'true')
 
-  // The right-rail coming-soon panel restates the roadmap.
+  // The right-rail coming-soon panel restates the remaining Phase-3 roadmap.
   await expect(page.getByTestId('coming-soon-rail')).toBeVisible()
-  await expect(page.getByTestId('rail-charts')).toHaveAttribute('aria-disabled', 'true')
   await expect(page.getByTestId('rail-connect-db')).toHaveAttribute('aria-disabled', 'true')
 
   // Every Soon pill carries the marking; the add-source stub is disabled.

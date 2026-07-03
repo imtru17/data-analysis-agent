@@ -31,7 +31,7 @@ def create_analysis(req: AnalyzeRequest, session: Session = Depends(get_session)
 
     def event_stream() -> Iterator[str]:
         try:
-            for event in stream_analysis(req.dataset_id, req.question):
+            for event in stream_analysis(req.dataset_id, req.question, req.want_chart):
                 yield _sse_frame(event["event"], event["data"])
         except Exception as exc:  # noqa: BLE001 — never hang; emit terminal error
             yield _sse_frame("error", {"run_id": None, "message": f"{type(exc).__name__}: {exc}"})
@@ -51,6 +51,7 @@ def _to_detail(run: AnalysisRunRow) -> dict:
         generated_code=run.generated_code,
         plan=run.plan,
         result_summary=json.loads(run.result_summary_json) if run.result_summary_json else None,
+        chart_spec=json.loads(run.chart_spec_json) if run.chart_spec_json else None,
         answer=run.answer,
         status=run.status,
         low_confidence=run.low_confidence,

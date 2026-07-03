@@ -1,27 +1,37 @@
 'use client'
 
-import { useState } from 'react'
-import { SoonPill } from './Stub'
-
 // The question composer: a textbox + Send. Disabled until a dataset is loaded
 // (hint "Upload a CSV to start") and while an analysis is in flight. The
-// "📊 Chart" toggle is a labelled stub.
+// "📊 Chart" toggle is REAL (Phase 2): when on, the analysis requests a chart.
+// The composer value is controlled by the parent so follow-up chips can fill and
+// send it.
 
 interface ComposerProps {
-  onSend: (question: string) => void
+  value: string
+  onValueChange: (value: string) => void
+  onSend: (question: string, wantChart: boolean) => void
   hasDataset: boolean
   inFlight: boolean
+  wantChart: boolean
+  onToggleChart: (on: boolean) => void
 }
 
-export function Composer({ onSend, hasDataset, inFlight }: ComposerProps) {
-  const [value, setValue] = useState('')
+export function Composer({
+  value,
+  onValueChange,
+  onSend,
+  hasDataset,
+  inFlight,
+  wantChart,
+  onToggleChart,
+}: ComposerProps) {
   const disabled = !hasDataset || inFlight
   const canSend = hasDataset && !inFlight && value.trim().length > 0
 
   function submit() {
     if (!canSend) return
-    onSend(value.trim())
-    setValue('')
+    onSend(value.trim(), wantChart)
+    onValueChange('')
   }
 
   return (
@@ -29,22 +39,30 @@ export function Composer({ onSend, hasDataset, inFlight }: ComposerProps) {
       <div className="flex items-end gap-2">
         <button
           type="button"
-          aria-disabled="true"
-          disabled
-          title="Coming soon — arrives in a later phase."
           data-testid="chart-toggle"
-          onClick={e => e.preventDefault()}
-          className="flex cursor-not-allowed items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-2 text-xs text-gray-500 opacity-60"
+          aria-pressed={wantChart}
+          disabled={!hasDataset}
+          onClick={() => onToggleChart(!wantChart)}
+          title={
+            wantChart
+              ? 'Chart requested — the answer will include a chart when it makes sense.'
+              : 'Ask for a chart with this question.'
+          }
+          className={`flex items-center gap-1 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            wantChart
+              ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+              : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+          }`}
         >
           📊 Chart
-          <SoonPill />
+          {wantChart && <span aria-hidden>✓</span>}
         </button>
 
         <div className="relative flex-1">
           <textarea
             data-testid="composer-input"
             value={value}
-            onChange={e => setValue(e.target.value)}
+            onChange={e => onValueChange(e.target.value)}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -53,9 +71,7 @@ export function Composer({ onSend, hasDataset, inFlight }: ComposerProps) {
             }}
             disabled={disabled}
             rows={1}
-            placeholder={
-              hasDataset ? 'Ask a question about your data…' : 'Upload a CSV to start'
-            }
+            placeholder={hasDataset ? 'Ask a question about your data…' : 'Upload a CSV to start'}
             className="max-h-40 w-full resize-none rounded-lg border border-gray-300 px-3 py-2.5 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
           />
         </div>

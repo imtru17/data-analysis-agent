@@ -17,6 +17,7 @@ class DatasetProfile(BaseModel):
 class AnalyzeRequest(BaseModel):
     dataset_id: str = Field(..., min_length=1)
     question: str = Field(..., min_length=1)
+    want_chart: bool = False
 
 
 class RunTokens(BaseModel):
@@ -31,6 +32,7 @@ class RunDetail(BaseModel):
     generated_code: str | None = None
     plan: str | None = None
     result_summary: dict | None = None
+    chart_spec: dict | None = None
     answer: str | None = None
     status: str
     low_confidence: bool = False

@@ -1,7 +1,14 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { uploadDataset, ApiError, NetworkError, type DatasetProfile } from '@/lib/api'
+import {
+  uploadDataset,
+  fetchProfile,
+  ApiError,
+  NetworkError,
+  type ColumnProfile,
+  type DatasetProfile,
+} from '@/lib/api'
 import { SoonPill } from './Stub'
 
 const MAX_UPLOAD_MB = 500
@@ -49,6 +56,16 @@ export function UploadControl({
     onUploading(true)
     try {
       const profile = await uploadDataset(file)
+      // Phase 2: enrich with the richer per-column stats + follow-up suggestions.
+      // If the profile endpoint is unavailable the basic profile still renders.
+      const rich = await fetchProfile(profile.dataset_id)
+      if (rich) {
+        const byName = new Map<string, ColumnProfile>(
+          rich.profile.columns.map(c => [c.name, c]),
+        )
+        profile.columns = profile.columns.map(c => ({ ...c, ...(byName.get(c.name) ?? {}) }))
+        if (rich.followups?.length) profile.followups = rich.followups
+      }
       onProfile(profile)
     } catch (err) {
       if (err instanceof NetworkError) {

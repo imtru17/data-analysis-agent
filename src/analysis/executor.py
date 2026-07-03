@@ -163,6 +163,35 @@ def _run_in_namespace(code: str, df: pd.DataFrame) -> tuple[object, str]:
     return result, buf.getvalue()
 
 
+def run_code_raw(code: str, df: pd.DataFrame) -> object:
+    """Execute generated code and return the FULL raw ``result`` object.
+
+    Unlike ``run_code`` (which returns a bounded summary), this returns the
+    complete result — used ONLY for local exports the local user downloads to
+    their own machine. Applies the same static pre-check and restricted
+    namespace, and enforces the wall-clock timeout. Raises ``ValueError`` on
+    rejection / missing result and re-raises any execution error.
+    """
+    rejection = static_check(code)
+    if rejection is not None:
+        raise ValueError(rejection)
+
+    timeout = get_settings().exec_timeout
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(_run_in_namespace, code, df)
+        result, _stdout = future.result(timeout=timeout)
+    except FutureTimeout:
+        pool.shutdown(wait=False)
+        raise TimeoutError(f"Execution exceeded the {timeout}s wall-clock timeout.")
+    finally:
+        pool.shutdown(wait=False)
+
+    if result is None and "result" not in code:
+        raise ValueError("Code did not assign to `result`.")
+    return result
+
+
 def run_code(code: str, df: pd.DataFrame) -> ExecResult:
     """Execute generated code against ``df`` in a restricted namespace with a
     wall-clock timeout. Errors are captured (non-fatal) into ``ExecResult.error``."""

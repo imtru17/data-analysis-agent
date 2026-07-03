@@ -8,7 +8,13 @@ import { AgentAnswer } from './AgentAnswer'
 // The scrollable conversation. Renders each message by kind and auto-scrolls to
 // the newest turn. Shows an empty-state prompt when nothing has happened yet.
 
-export function MessageThread({ messages }: { messages: ChatMessage[] }) {
+interface MessageThreadProps {
+  messages: ChatMessage[]
+  onFollowup?: (question: string) => void
+  followupsDisabled?: boolean
+}
+
+export function MessageThread({ messages, onFollowup, followupsDisabled }: MessageThreadProps) {
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -36,14 +42,27 @@ export function MessageThread({ messages }: { messages: ChatMessage[] }) {
   return (
     <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4" data-testid="message-thread">
       {messages.map(msg => (
-        <MessageRow key={msg.id} message={msg} />
+        <MessageRow
+          key={msg.id}
+          message={msg}
+          onFollowup={onFollowup}
+          followupsDisabled={followupsDisabled}
+        />
       ))}
       <div ref={endRef} />
     </div>
   )
 }
 
-function MessageRow({ message }: { message: ChatMessage }) {
+function MessageRow({
+  message,
+  onFollowup,
+  followupsDisabled,
+}: {
+  message: ChatMessage
+  onFollowup?: (question: string) => void
+  followupsDisabled?: boolean
+}) {
   if (message.kind === 'user') {
     return (
       <div className="flex justify-end" data-testid="user-message">
@@ -55,7 +74,13 @@ function MessageRow({ message }: { message: ChatMessage }) {
   }
 
   if (message.kind === 'profile') {
-    return <ProfileMessage profile={message.profile} />
+    return (
+      <ProfileMessage
+        profile={message.profile}
+        onFollowup={onFollowup}
+        followupsDisabled={followupsDisabled}
+      />
+    )
   }
 
   if (message.kind === 'system') {

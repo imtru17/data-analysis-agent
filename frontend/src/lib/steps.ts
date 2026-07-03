@@ -32,11 +32,22 @@ export function applyStep(
   stepKey: string,
   status: string,
 ): StepChip[] {
-  const idx = chips.findIndex(c => c.key === stepKey)
-  if (idx === -1) return chips
-  const next = chips.map(c => ({ ...c }))
   const mapped: ChipStatus =
     status === 'running' ? 'running' : status === 'skipped' ? 'skipped' : 'done'
+
+  let idx = chips.findIndex(c => c.key === stepKey)
+
+  // The "Charting" chip is conditional — it is inserted (after "Answering") only
+  // when a `chart_spec` step event actually arrives, so it never shows on the
+  // non-chart path. Once inserted it flips like any other chip.
+  if (idx === -1) {
+    if (stepKey !== 'chart_spec') return chips
+    const withChart = chips.map(c => ({ ...c }))
+    withChart.push({ key: 'chart_spec', label: 'Charting', status: mapped })
+    return withChart
+  }
+
+  const next = chips.map(c => ({ ...c }))
   next[idx].status = mapped
   for (let i = 0; i < idx; i++) {
     if (next[i].status === 'pending') next[i].status = 'skipped'

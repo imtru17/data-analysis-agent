@@ -1,13 +1,15 @@
 'use client'
 
 import { useState } from 'react'
-import { SoonPill, StubButton } from './Stub'
+import { SoonPill } from './Stub'
 
-// App header: title + real branding, plus two clearly-labelled stubs — the
-// "Today: —" cost placeholder and a History button that opens a disabled panel.
+// App header: title + real branding, a REAL "Today: $x.xx" running cost total
+// (Phase 2, fetched from GET /cost/today), and a still-stubbed History button
+// that opens a disabled "coming soon" panel.
 
-export function Header() {
+export function Header({ todayCost }: { todayCost?: number | null }) {
   const [historyOpen, setHistoryOpen] = useState(false)
+  const cost = typeof todayCost === 'number' ? todayCost : 0
 
   return (
     <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/90 backdrop-blur">
@@ -27,13 +29,11 @@ export function Header() {
 
         <div className="flex items-center gap-2">
           <span
-            aria-disabled="true"
-            title="Coming soon — arrives in a later phase."
+            title="Total Anthropic spend today across all analyses."
             data-testid="today-cost"
-            className="flex cursor-not-allowed items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs font-medium text-gray-400 opacity-60"
+            className="flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs font-medium text-gray-700"
           >
-            Today: —
-            <SoonPill />
+            Today: {formatCost(cost)}
           </span>
 
           <div className="relative">
@@ -65,4 +65,9 @@ export function Header() {
       </div>
     </header>
   )
+}
+
+function formatCost(value: number): string {
+  if (value > 0 && value < 0.01) return `$${value.toFixed(4)}`
+  return `$${value.toFixed(2)}`
 }
