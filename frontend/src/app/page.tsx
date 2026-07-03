@@ -1,77 +1,153 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
+import {
+  streamAnalysis,
+  NetworkError,
+  ApiError,
+  type DatasetProfile,
+  type StepEvent,
+  type DoneEvent,
+  type StreamErrorEvent,
+} from '@/lib/api'
+import { applyStep, initialChips, markError } from '@/lib/steps'
+import {
+  newId,
+  type AgentMessage,
+  type ChatMessage,
+} from '@/lib/messages'
+import { Header } from './components/Header'
+import { UploadControl } from './components/UploadControl'
+import { MessageThread } from './components/MessageThread'
+import { Composer } from './components/Composer'
+import { ComingSoonRail } from './components/ComingSoonRail'
+import { Toast } from './components/Toast'
 
 export default function Home() {
-  const [input, setInput] = useState('')
-  const [result, setResult] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [dataset, setDataset] = useState<DatasetProfile | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [inFlight, setInFlight] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!input.trim()) return
-    setLoading(true)
-    setError(null)
-    setResult(null)
-    try {
-      const res = await fetch('/runs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input_text: input }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.detail?.message ?? `Request failed (${res.status})`)
-      } else if (data.data?.error) {
-        setError(data.data.error)
-      } else {
-        setResult(data.data.output_text)
+  const datasetRef = useRef<DatasetProfile | null>(null)
+
+  const patchAgent = useCallback((id: string, patch: (m: AgentMessage) => AgentMessage) => {
+    setMessages(prev =>
+      prev.map(m => (m.id === id && m.kind === 'agent' ? patch(m) : m)),
+    )
+  }, [])
+
+  const handleProfile = useCallback((profile: DatasetProfile) => {
+    setDataset(profile)
+    datasetRef.current = profile
+    setMessages(prev => [...prev, { id: newId('profile'), kind: 'profile', profile }])
+  }, [])
+
+  const handleReject = useCallback((text: string) => {
+    setMessages(prev => [...prev, { id: newId('sys'), kind: 'system', text, tone: 'error' }])
+  }, [])
+
+  const handleNetworkError = useCallback(() => {
+    setToast("Can't reach the server — is it running on :8001?")
+  }, [])
+
+  const handleSend = useCallback(
+    async (question: string) => {
+      const ds = datasetRef.current
+      if (!ds || inFlight) return
+
+      const agentId = newId('agent')
+      const agentMsg: AgentMessage = {
+        id: agentId,
+        kind: 'agent',
+        status: 'streaming',
+        chips: initialChips(),
+        answer: '',
+        code: '',
+        lowConfidence: false,
       }
-    } catch {
-      setError('Network error — is the server running?')
-    } finally {
-      setLoading(false)
-    }
-  }
+
+      setMessages(prev => [
+        ...prev,
+        { id: newId('user'), kind: 'user', text: question },
+        agentMsg,
+      ])
+      setInFlight(true)
+
+      try {
+        await streamAnalysis(ds.dataset_id, question, {
+          onStep: (ev: StepEvent) =>
+            patchAgent(agentId, m => ({ ...m, chips: applyStep(m.chips, ev.step, ev.status) })),
+          onDone: (ev: DoneEvent) =>
+            patchAgent(agentId, m => ({
+              ...m,
+              status: 'completed',
+              chips: m.chips.map(c => (c.status === 'running' || c.status === 'pending' ? { ...c, status: 'done' } : c)),
+              answer: ev.answer ?? '',
+              code: ev.generated_code ?? '',
+              lowConfidence: Boolean(ev.low_confidence),
+              lowConfidenceNote: ev.low_confidence_note,
+            })),
+          onError: (ev: StreamErrorEvent) =>
+            patchAgent(agentId, m => ({
+              ...m,
+              status: 'failed',
+              chips: markError(m.chips),
+              errorText: ev.message,
+            })),
+        })
+      } catch (err) {
+        if (err instanceof NetworkError) {
+          handleNetworkError()
+          patchAgent(agentId, m => ({
+            ...m,
+            status: 'failed',
+            chips: markError(m.chips),
+            errorText: "Can't reach the server. Check it's running on :8001 and try again.",
+          }))
+        } else {
+          const message = err instanceof ApiError ? err.message : 'Something went wrong running the analysis.'
+          patchAgent(agentId, m => ({
+            ...m,
+            status: 'failed',
+            chips: markError(m.chips),
+            errorText: message,
+          }))
+        }
+      } finally {
+        setInFlight(false)
+      }
+    },
+    [inFlight, patchAgent, handleNetworkError],
+  )
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-16">
-      <h1 className="mb-8 text-3xl font-bold tracking-tight">Agent</h1>
+    <div className="flex h-screen flex-col bg-gray-50">
+      <Header />
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <textarea
-          className="w-full rounded-lg border border-gray-300 p-3 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          rows={4}
-          placeholder="Enter text to transform…"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          disabled={loading}
-        />
-        <button
-          type="submit"
-          disabled={loading || !input.trim()}
-          className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {loading ? 'Running…' : 'Run'}
-        </button>
-      </form>
+      <div className="mx-auto flex w-full max-w-6xl flex-1 overflow-hidden">
+        <main className="flex flex-1 flex-col overflow-hidden">
+          <div className="px-4 pt-4">
+            <UploadControl
+              onUploading={setUploading}
+              onProfile={handleProfile}
+              onReject={handleReject}
+              onNetworkError={handleNetworkError}
+              busy={uploading}
+              hasDataset={dataset !== null}
+            />
+          </div>
 
-      {error && (
-        <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+          <MessageThread messages={messages} />
 
-      {result && (
-        <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4 text-sm whitespace-pre-wrap shadow-sm">
-          {result}
-        </div>
-      )}
+          <Composer onSend={question => void handleSend(question)} hasDataset={dataset !== null} inFlight={inFlight} />
+        </main>
 
-      {!result && !error && !loading && (
-        <p className="mt-10 text-center text-sm text-gray-400">Results will appear here.</p>
-      )}
-    </main>
+        <ComingSoonRail />
+      </div>
+
+      {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
+    </div>
   )
 }

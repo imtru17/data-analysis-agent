@@ -10,6 +10,16 @@ def _reset_settings_singleton():
 
 
 @pytest.fixture(autouse=True)
+def _isolated_uploads(tmp_path, monkeypatch):
+    """Point the dataset store at a per-test uploads dir."""
+    monkeypatch.setenv("AGENT_UPLOADS_DIR", str(tmp_path / "uploads"))
+    import config.settings as m
+    m._settings = None
+    yield
+    m._settings = None
+
+
+@pytest.fixture(autouse=True)
 def _isolated_db(tmp_path, monkeypatch):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
