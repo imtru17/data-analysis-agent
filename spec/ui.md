@@ -47,6 +47,39 @@ By end of Phase 3 **no Phase-1 stub remains**; every "Coming soon" card becomes 
 
 **Anything still a stub:** nothing from the Phase-1 vision. (No auth/multi-user by design — that is out-of-scope in `spec/roadmap.md`, not a stub.)
 
+### Phase 4 surfaces — Data workbench (built; LOCAL, no LLM)
+
+A **Data** tab/panel on a loaded dataset, alongside the chat thread. Everything here runs locally and makes no LLM call.
+
+| Surface | Where | Behaviour |
+|---------|-------|-----------|
+| **Profile tiles** (`ProfileTiles.tsx`) | A grid at the top of the Data panel | `GET /datasets/{id}/tiles` → one tile per column showing distinct + null counts and its dtype, plus a header tile with the total **row count**. A unique non-null column shows a **PK** badge; a column detected as a foreign key shows an **FK → `<dataset>.<col>`** badge. Tiles are **clickable**. |
+| **Column drill-in** (`ColumnValues.tsx`) | Popover/panel opened by clicking a column tile | `GET /datasets/{id}/columns/{col}/values` → the column's **top values + counts** (a small bar/list), with a "showing top N" note when `truncated`. |
+| **SQL query box** (`SqlQueryBox.tsx`) | Below the tiles | A monospace textarea + **Run** button. Helper text: "Query your data with SQL — the table is named **`data`**". Sends `POST /datasets/{id}/query`. |
+| **Result table** (`ResultTable.tsx`) | Under the query box | Renders `columns`/`rows` with a **row count** caption and a "showing first N of …" note when `truncated`. A **Download CSV** button calls `POST /datasets/{id}/query/download` and saves the **full** result. A bad query shows a friendly inline error banner (the server's `BAD_REQUEST` message) — **never** a crash or stack trace. |
+
+**Phase 4 also ships three clearly-labelled Phase-5 STUBS** (a stub must never look like a bug):
+
+| Stub | Where | Labelled state |
+|------|-------|----------------|
+| **Dashboard** view button (`DashboardStub.tsx`) | Data panel toolbar | Disabled/badged "Coming soon" — opens a preview note describing the combined tiles + charts dashboard. No live call. |
+| **3D chart preview** (`Chart3dStub.tsx`) | A card in the Data panel | A static/placeholder image or note badged "Coming soon" for the interactive rotatable 3D chart. No live call. |
+| **Connect & create table** (`ConnectCreateTableStub.tsx`) | Data panel toolbar | A disabled form/button badged "Coming soon / add credentials" for creating a table in AWS S3 / Snowflake / another DB, with a note that cloud is opt-in. No live call. |
+
+### Phase 5 surfaces (deferred — these REPLACE the Phase-4 stubs)
+
+| Surface | Where | Behaviour |
+|---------|-------|-----------|
+| **Dashboard** (`Dashboard.tsx`) | Full view combining tiles + charts | `GET /datasets/{id}/dashboard` → profile tiles + multiple 2D (Vega) charts + the interactive 3D chart. |
+| **Interactive 3D chart** (`Chart3d.tsx`) | Card in the Dashboard | `GET /datasets/{id}/chart3d` → a **rotatable** Plotly.js 3D scatter/surface rendered from a **locally-bundled** `plotly.js-dist-min` (no external CDN), with an **x/y/z axis picker** (auto-picked when unset). |
+| **Connect & create table** (`ConnectCreateTable.tsx`) | Replaces the stub | Target picker: **local/Postgres = real** table creation matching the file schema; **S3 / Snowflake = labelled "add credentials" preview** (no live call). Any cloud target shows an explicit **"this sends data to the cloud"** warning before acting. |
+
+## Error States (Phase 4 additions)
+
+- **Bad SQL** → an inline error banner under the query box with the friendly server `BAD_REQUEST` message (e.g. the DuckDB parse error text). The composer/query box stays usable; **no** stack trace, no 500.
+- **Empty result** → the result table shows "0 rows" rather than an error.
+- **Unknown column drill-in** → the popover shows the friendly "unknown column" message.
+
 ## Error States
 
 - **Upload rejected** (unsupported type / too large / unparseable / no table in a PDF) → an inline system message in the thread with the friendly server reason (e.g. "Couldn't find a table in that PDF — try CSV/Excel/Parquet."). Phase 3 accepts CSV/Excel/JSON/Parquet/PDF/logs up to the size limit.
@@ -64,6 +97,8 @@ By end of Phase 3 **no Phase-1 stub remains**; every "Coming soon" card becomes 
 `frontend/tests/e2e/insight.spec.ts` (Phase 2): profile card + follow-up chips, chart render + download, cost badge/today total, export menu.
 
 `frontend/tests/e2e/sources.spec.ts` (Phase 3, required): connects a **local SQLite** DB source (a seeded file, no external credentials), asks a question that pushes SQL down and returns an answer; uploads a non-CSV (Parquet or Excel) and asks; runs a multi-source compare across the file + the DB; adds a column annotation and confirms it persists; reopens a session from the history browser and asserts the prior thread is restored. Part of the Phase-3 gate.
+
+`frontend/tests/e2e/workbench.spec.ts` (Phase 4, required): uploads a CSV, opens the Data panel, asserts the profile tiles render with the correct row count and a PK/FK badge, clicks a column tile and asserts the value-counts drill-in appears, runs a `SELECT ... FROM data` query and asserts the result table + row count render, runs a broken query and asserts a friendly inline error (not a crash), and clicks Download CSV. Also asserts the three Phase-5 stubs (Dashboard, 3D chart, Connect & create table) are visibly labelled "Coming soon". Part of the Phase-4 gate.
 
 ## Tech Stack
 

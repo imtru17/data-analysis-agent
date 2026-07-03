@@ -170,6 +170,73 @@ Same endpoint as Phase 1, now accepting `.csv/.xlsx/.json/.parquet/.pdf/.log/.tx
 ### `POST /analyses` (multi-source, Phase 3)
 As documented above — accepts `source_ids` (files and/or connections) + optional `session_id`. Same SSE stream. **Errors:** 400 `BAD_REQUEST` for an unknown/empty source id or empty question.
 
+## Phase 4 Endpoints (Data workbench — LOCAL only, no LLM)
+
+All use the standard envelope. Every endpoint here is **local and deterministic** — it reads the dataset's DataFrame in-process and makes **no** Anthropic / network call, so the privacy invariant holds by construction.
+
+### `GET /datasets/{id}/tiles`
+**Purpose:** Return the profile-tiles payload for a dataset — row count, per-column distinct + null counts, and detected PK/FK candidates (computed locally, reusing `analysis.profile.compute_profile`).
+**Response:**
+```json
+{
+  "data": {
+    "row_count": 10432,
+    "columns": [
+      {
+        "name": "customer_id", "dtype": "int64",
+        "distinct": 812, "null_count": 0,
+        "is_pk_candidate": false,
+        "fk_candidates": [
+          { "references_dataset_id": "uuid", "references_dataset_name": "customers.csv", "references_column": "id" }
+        ]
+      }
+    ],
+    "primary_key_candidates": ["order_id"],
+    "foreign_key_candidates": [
+      { "column": "customer_id", "references_dataset_id": "uuid", "references_dataset_name": "customers.csv", "references_column": "id" }
+    ]
+  },
+  "error": null
+}
+```
+> **PK candidate** = column with `null_count == 0` and distinct == non-null count (unique + non-null). **FK candidate** = a column whose non-null distinct values are a subset of another loaded dataset's PK-candidate column's values (name heuristics like `<parent>_id` order/boost candidates). **FK scan scope:** same-session datasets when `session_id` is set, else the most recent `AGENT_WORKBENCH_FK_SCAN` (default 25) datasets. **Errors:** 404 `NOT_FOUND` (unknown dataset); 400 `BAD_REQUEST` (unreadable file).
+
+### `GET /datasets/{id}/columns/{col}/values`
+**Purpose:** Drill-in for a clicked column tile — the column's top values + counts over the full data.
+**Response:** `{ "data": { "column": "region", "total": 10432, "values": [ { "value": "West", "count": 4210 }, ... ], "truncated": false }, "error": null }`.
+> Bounded to a top-N (default 50) with `truncated` set when there are more distinct values. **Errors:** 404 unknown dataset; 400 `BAD_REQUEST` for an unknown column.
+
+### `POST /datasets/{id}/query`
+**Purpose:** Run raw SQL locally via **DuckDB** over the dataset's DataFrame and return a bounded result table. No LLM, no network.
+**Request:** `{ "sql": "SELECT region, SUM(revenue) AS total FROM data GROUP BY region ORDER BY total DESC" }`
+**Response:**
+```json
+{
+  "data": {
+    "columns": ["region", "total"],
+    "rows": [ { "region": "West", "total": 1200500.0 } ],
+    "row_count": 4,
+    "truncated": false
+  },
+  "error": null
+}
+```
+> **Table names:** the frame is registered as the canonical view **`data`** *and* the sanitized filename stem (e.g. `orders.csv` → `orders`) — a query may `SELECT ... FROM data`. The result table is capped to `AGENT_WORKBENCH_DISPLAY_ROWS` (default 500) with `truncated: true` when the full result is larger. **Errors:** 404 unknown dataset; **400 `BAD_REQUEST`** for any DuckDB parse/execution error, carrying the friendly DuckDB message — **never a 500 / stack trace**.
+
+### `POST /datasets/{id}/query/download`
+**Purpose:** Re-run the same SQL locally and stream the **full** (uncapped) result as a CSV attachment. Reuses the `export.py` `Content-Disposition` pattern.
+**Request:** `{ "sql": "SELECT * FROM data WHERE revenue > 1000" }`
+**Response:** `Content-Type: text/csv`, `Content-Disposition: attachment; filename="query_<id8>.csv"` — the full result body.
+> **Errors:** 404 unknown dataset; 400 `BAD_REQUEST` on bad SQL (same friendly handling as `/query`).
+
+## Phase 5 Endpoints (Dashboard + 3D + cloud — deferred / stubbed)
+
+Documented for the deferred phase; in Phase 4 the corresponding UI surfaces are labelled stubs and these endpoints are not built.
+
+- `GET /datasets/{id}/dashboard` → `{ tiles, charts:[vega specs], chart3d }` — assembled locally.
+- `GET /datasets/{id}/chart3d?x=&y=&z=` → a Plotly figure spec with bounded, locally-computed points (axes auto-picked from numeric columns when omitted).
+- `POST /datasets/{id}/create-table` → `{ target, ...config }`. `target=local|postgresql` creates a table matching the file schema (real). `target=s3|snowflake` **without credentials** returns a friendly `BAD_REQUEST` ("add credentials") and makes **no** network call — the cloud adapters are stubbed and gated behind the optional `cloud` extra.
+
 ## Authentication
 
 None — single local user on `localhost`. No auth, no accounts. (Documented out-of-scope in `spec/roadmap.md`.)

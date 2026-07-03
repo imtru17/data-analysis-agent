@@ -35,6 +35,18 @@
 | Column/business annotations | [annotations.md](annotations.md) |
 | Multi-source auto-pick / join / compare | [multi-source-join.md](multi-source-join.md) |
 
+### Phase 4 (built)
+
+| Capability | File |
+|-----------|------|
+| Data workbench: profile tiles (PK/FK) + local DuckDB SQL query box | [data-workbench.md](data-workbench.md) |
+
+### Phase 5 (deferred — stubbed in Phase 4)
+
+| Capability | File |
+|-----------|------|
+| Dashboard + interactive 3D charts + cloud connectors (opt-in) | [dashboard-cloud.md](dashboard-cloud.md) |
+
 ## How to Add a New Capability
 
 Run `/zero-shot-build [description]` on the existing spec. The spec-writer creates a new `<name>.md`, updates this index, flags dependencies, and self-reviews fit against the architecture and data model.

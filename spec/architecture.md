@@ -184,8 +184,16 @@ The store gains per-format loaders, each producing a DataFrame profiled to schem
 | pdfplumber | >=0.11 (add, Phase 3) | PDF table extraction (graceful when no table) |
 | psycopg2-binary | >=2.9 (add, **optional extra** `db`, Phase 3) | Postgres driver for DB sources |
 | pymysql | >=1.1 (add, **optional extra** `db`, Phase 3) | MySQL driver for DB sources |
+| duckdb | >=1.0 (add, Phase 4) | LOCAL, in-process SQL over the dataset's pandas DataFrame (the workbench SQL query box) — no network, no data egress |
+| plotly.js-dist-min | latest (frontend, add, Phase 5) | Interactive rotatable 3D chart, **bundled locally** (no external CDN); existing 2D charts stay on Vega-Lite |
+| boto3 | latest (add, **optional extra** `cloud`, Phase 5) | AWS S3 "create table" connector — **stubbed & gated out of the build**; live call only when credentials are supplied |
+| snowflake-connector-python | latest (add, **optional extra** `cloud`, Phase 5) | Snowflake "create table" connector — **stubbed & gated out of the build** |
 
 > Phase-3 note: **pyarrow** (Parquet) is already a dependency. **SQLite** DB sources need no extra driver (stdlib). Postgres/MySQL drivers ship as an optional `db` extra (`uv sync --extra db`) so the base install and the Phase-3 gate stay driver-light — the gate exercises the DB-source path against a **local seeded SQLite DB**, needing no external credentials.
+
+> Phase-4 note: **duckdb** runs entirely in-process against the DataFrame already loaded from the local file — the **profile tiles and the SQL query box are LOCAL-only and preserve the privacy invariant by construction** (nothing leaves the machine, no prompt is built, no LLM call). New setting `AGENT_WORKBENCH_DISPLAY_ROWS` (default 500) caps the displayed result table; downloads re-run the SQL for the full result. FK detection scans other loaded datasets (same-session, else recent `AGENT_WORKBENCH_FK_SCAN`, default 25).
+
+> Phase-5 note: **plotly.js-dist-min** is bundled into the static frontend export — no external CDN, keeping the local-first, self-contained deployment. Cloud connectors (**boto3**, **snowflake-connector-python**) ship as an optional `cloud` extra (`uv sync --extra cloud`) and are **stubbed** so the Phase-5 build/gate need **no AWS/Snowflake credentials**; the local/Postgres create-table path is real. Any cloud action is opt-in and shows an explicit data-egress warning.
 
 **Avoid:** sending any DataFrame or raw rows into `src/llm` or `src/analysis/privacy.py` (breaks the invariant). Sending a full DB table into memory or into a prompt — DB work is pushed down as read-only SQL, only bounded results return. Putting a connection string (DSN) into any `LlmContext`, log line, exception message, or API response (mask it; store only in the git-ignored SQLite DB via `SecretStr`). Generated DB code that is not a single read-only `SELECT`/`WITH`. No pandas `read_*` inside generated code (executor supplies `df`). No `eval`/`import` in the executor namespace. No second Python package — extend `src/` in place (bare imports, `pythonpath=["src"]`). No SQLite-substitute for the *audit* DB gate — gates run the real driver + real Anthropic key; the DB-*source* gate uses a real local SQLite database as a genuine pushed-down source.
 

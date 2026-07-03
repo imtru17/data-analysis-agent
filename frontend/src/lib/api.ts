@@ -386,6 +386,144 @@ export function exportUrl(runId: string, kind: ExportKind): string {
   return `/analyses/${encodeURIComponent(runId)}/export?kind=${kind}`
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4: Data workbench (LOCAL, no LLM) — profile tiles, column drill-in,
+// DuckDB SQL query + result table + full-result CSV download.
+// ---------------------------------------------------------------------------
+
+/** A detected foreign-key reference from one dataset column to another's PK column. */
+export interface FkCandidate {
+  references_dataset_id: string
+  references_dataset_name: string
+  references_column: string
+}
+
+/** One column's tile payload: distinct/null counts + PK/FK detection. */
+export interface TileColumn {
+  name: string
+  dtype: string
+  distinct: number
+  null_count: number
+  is_pk_candidate: boolean
+  fk_candidates: FkCandidate[]
+}
+
+/** Response shape of GET /datasets/{id}/tiles. */
+export interface DatasetTiles {
+  row_count: number
+  columns: TileColumn[]
+  primary_key_candidates: string[]
+  foreign_key_candidates: {
+    column: string
+    references_dataset_id: string
+    references_dataset_name: string
+    references_column: string
+  }[]
+}
+
+/** One (value, count) pair in a column drill-in. */
+export interface ColumnValue {
+  value: unknown
+  count: number
+}
+
+/** Response shape of GET /datasets/{id}/columns/{col}/values. */
+export interface ColumnValues {
+  column: string
+  total: number
+  values: ColumnValue[]
+  truncated: boolean
+}
+
+/** Response shape of POST /datasets/{id}/query. */
+export interface QueryResult {
+  columns: string[]
+  rows: Record<string, unknown>[]
+  row_count: number
+  truncated: boolean
+}
+
+/** Fetch the profile-tiles payload for a dataset. GET /datasets/{id}/tiles. */
+export async function fetchTiles(datasetId: string): Promise<DatasetTiles> {
+  let res: Response
+  try {
+    res = await fetch(`/datasets/${encodeURIComponent(datasetId)}/tiles`)
+  } catch {
+    throw new NetworkError()
+  }
+  if (!res.ok) throw await parseErrorEnvelope(res)
+  const body = (await res.json()) as { data: DatasetTiles; error: null }
+  return body.data
+}
+
+/** Fetch a column's top values + counts (drill-in). GET /datasets/{id}/columns/{col}/values. */
+export async function fetchColumnValues(datasetId: string, col: string): Promise<ColumnValues> {
+  let res: Response
+  try {
+    res = await fetch(
+      `/datasets/${encodeURIComponent(datasetId)}/columns/${encodeURIComponent(col)}/values`,
+    )
+  } catch {
+    throw new NetworkError()
+  }
+  if (!res.ok) throw await parseErrorEnvelope(res)
+  const body = (await res.json()) as { data: ColumnValues; error: null }
+  return body.data
+}
+
+/** Run raw SQL locally via DuckDB over the dataset. POST /datasets/{id}/query. */
+export async function runQuery(datasetId: string, sql: string): Promise<QueryResult> {
+  let res: Response
+  try {
+    res = await fetch(`/datasets/${encodeURIComponent(datasetId)}/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql }),
+    })
+  } catch {
+    throw new NetworkError()
+  }
+  // A bad query comes back as a 400 BAD_REQUEST carrying the friendly DuckDB
+  // message — surfaced as an ApiError the query box renders inline.
+  if (!res.ok) throw await parseErrorEnvelope(res)
+  const body = (await res.json()) as { data: QueryResult; error: null }
+  return body.data
+}
+
+/**
+ * Re-run the SQL and download the FULL (uncapped) result as a CSV attachment.
+ * POST /datasets/{id}/query/download. Reads the blob and triggers a browser
+ * download, honouring the server's Content-Disposition filename when present
+ * (mirrors the Chart component's anchor-click download idiom).
+ */
+export async function downloadQueryCsv(datasetId: string, sql: string): Promise<void> {
+  let res: Response
+  try {
+    res = await fetch(`/datasets/${encodeURIComponent(datasetId)}/query/download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql }),
+    })
+  } catch {
+    throw new NetworkError()
+  }
+  if (!res.ok) throw await parseErrorEnvelope(res)
+
+  const disposition = res.headers.get('Content-Disposition') ?? ''
+  const match = /filename="?([^";]+)"?/i.exec(disposition)
+  const filename = match?.[1] ?? `query_${datasetId.slice(0, 8)}.csv`
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 interface SseFrame {
   event: string
   data: string

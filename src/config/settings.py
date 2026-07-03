@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     # cannot pull a whole DB table into memory.
     sql_max_rows: int = Field(default=100_000)
 
+    # ── Phase 4 — data workbench (LOCAL only, no LLM) ─────────────────────
+    # Max rows shown in the bounded query-result table (download is uncapped).
+    workbench_display_rows: int = Field(default=500)
+    # How many recent datasets to scan for FK candidates when a dataset has no
+    # session (same-session datasets are always scanned when session_id is set).
+    workbench_fk_scan: int = Field(default=25)
+    # Top-N distinct values returned by the per-column value-counts drill-in.
+    workbench_values_topn: int = Field(default=50)
+
 
 _settings: Settings | None = None
 

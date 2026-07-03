@@ -29,6 +29,7 @@ import { Composer } from './components/Composer'
 import { SourcePanel } from './components/SourcePanel'
 import { ConnectDb } from './components/ConnectDb'
 import { SessionBrowser } from './components/SessionBrowser'
+import { Workbench } from './components/Workbench'
 import { Toast } from './components/Toast'
 
 export default function Home() {
@@ -44,6 +45,7 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionsOpen, setSessionsOpen] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
+  const [tab, setTab] = useState<'chat' | 'data'>('chat')
 
   const sourcesRef = useRef<Source[]>([])
   const selectedRef = useRef<Set<string>>(new Set())
@@ -336,6 +338,10 @@ export default function Home() {
   )
 
   const hasSources = sources.length > 0
+  const fileSources = sources.filter(s => s.kind === 'file')
+  const hasFileSource = fileSources.length > 0
+  // Fall back to the chat view when there is no file dataset to work on.
+  const activeTab = tab === 'data' && hasFileSource ? 'data' : 'chat'
 
   return (
     <div className="flex h-screen flex-col bg-gray-50">
@@ -371,22 +377,64 @@ export default function Home() {
             />
           </div>
 
-          <MessageThread
-            messages={messages}
-            onFollowup={handleFollowup}
-            followupsDisabled={inFlight}
-            onNetworkError={handleNetworkError}
-          />
+          {/* Chat / Data workbench tab strip. */}
+          <div
+            data-testid="workspace-tabs"
+            className="flex items-center gap-1 border-b border-gray-200 px-4 pt-3"
+          >
+            <button
+              type="button"
+              data-testid="tab-chat"
+              aria-selected={activeTab === 'chat'}
+              onClick={() => setTab('chat')}
+              className={`-mb-px rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium ${
+                activeTab === 'chat'
+                  ? 'border-indigo-600 text-indigo-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Chat
+            </button>
+            <button
+              type="button"
+              data-testid="tab-data"
+              aria-selected={activeTab === 'data'}
+              aria-disabled={!hasFileSource}
+              disabled={!hasFileSource}
+              title={hasFileSource ? 'Data workbench' : 'Upload a CSV to use the workbench'}
+              onClick={() => setTab('data')}
+              className={`-mb-px rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:text-gray-300 ${
+                activeTab === 'data'
+                  ? 'border-indigo-600 text-indigo-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Data
+            </button>
+          </div>
 
-          <Composer
-            value={draft}
-            onValueChange={setDraft}
-            onSend={(question, chart) => void handleSend(question, chart)}
-            hasDataset={hasSources}
-            inFlight={inFlight}
-            wantChart={wantChart}
-            onToggleChart={setChartToggle}
-          />
+          {activeTab === 'data' ? (
+            <Workbench fileSources={fileSources} onNetworkError={handleNetworkError} />
+          ) : (
+            <>
+              <MessageThread
+                messages={messages}
+                onFollowup={handleFollowup}
+                followupsDisabled={inFlight}
+                onNetworkError={handleNetworkError}
+              />
+
+              <Composer
+                value={draft}
+                onValueChange={setDraft}
+                onSend={(question, chart) => void handleSend(question, chart)}
+                hasDataset={hasSources}
+                inFlight={inFlight}
+                wantChart={wantChart}
+                onToggleChart={setChartToggle}
+              />
+            </>
+          )}
         </main>
 
         <SourcePanel
