@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api._common import api_error, ok
-from db.models import AnalysisRunRow, DatasetRow
+from db.models import AnalysisRunRow, ConnectionRow, DatasetRow
 from db.session import get_session
 from domain.analysis import AnalyzeRequest, RunDetail, RunListItem, RunTokens
 from graph.runner import stream_analysis
@@ -26,12 +26,26 @@ def _sse_frame(event: str, data: dict) -> str:
 def create_analysis(req: AnalyzeRequest, session: Session = Depends(get_session)):
     if not req.question.strip():
         raise api_error("BAD_REQUEST", "Question must not be empty.", 400)
-    if session.get(DatasetRow, req.dataset_id) is None:
-        raise api_error("BAD_REQUEST", f"Unknown dataset_id: {req.dataset_id}", 400)
+
+    source_ids = req.source_ids or ([req.dataset_id] if req.dataset_id else [])
+    if not source_ids:
+        raise api_error("BAD_REQUEST", "dataset_id or source_ids is required.", 400)
+
+    for sid in source_ids:
+        if session.get(DatasetRow, sid) is None and session.get(ConnectionRow, sid) is None:
+            raise api_error("BAD_REQUEST", f"Unknown source id: {sid}", 400)
+
+    primary_dataset_id = req.dataset_id or source_ids[0]
 
     def event_stream() -> Iterator[str]:
         try:
-            for event in stream_analysis(req.dataset_id, req.question, req.want_chart):
+            for event in stream_analysis(
+                primary_dataset_id,
+                req.question,
+                req.want_chart,
+                source_ids=req.source_ids,
+                session_id=req.session_id,
+            ):
                 yield _sse_frame(event["event"], event["data"])
         except Exception as exc:  # noqa: BLE001 — never hang; emit terminal error
             yield _sse_frame("error", {"run_id": None, "message": f"{type(exc).__name__}: {exc}"})

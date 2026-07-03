@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import pandas as pd
 
+from analysis.sources import loaders
 from config.settings import get_settings
 
 
@@ -61,30 +62,50 @@ def _uploads_dir() -> Path:
     return d
 
 
+def _find_file(dataset_id: str) -> Path | None:
+    """Locate the stored file for a dataset, whatever its extension."""
+    for p in sorted(_uploads_dir().glob(f"{dataset_id}.*")):
+        if p.is_file():
+            return p
+    return None
+
+
 def path(dataset_id: str) -> Path:
-    """Absolute path to a stored dataset file."""
+    """Absolute path to a stored dataset file.
+
+    Returns the actual stored file (any supported extension). Falls back to the
+    ``.csv`` path when nothing is stored yet (back-compat for the CSV path)."""
+    found = _find_file(dataset_id)
+    if found is not None:
+        return found
     return _uploads_dir() / f"{dataset_id}.csv"
 
 
-def save(upload_bytes: bytes, filename: str) -> str:
-    """Persist raw bytes under ./data/uploads/<dataset_id>.csv and return the id.
+def save(upload_bytes: bytes, filename: str, source_kind: str | None = None) -> str:
+    """Persist raw bytes under ./data/uploads/<dataset_id>.<ext> and return the id.
 
-    The original filename is not used on disk (avoids path traversal); it is
-    carried in the DatasetRow metadata instead.
+    The extension is taken from the original filename (falling back to the
+    source kind, else ``.csv``) so every format keeps its real extension while
+    the CSV path is unchanged. The original filename is not used on disk (avoids
+    path traversal); it is carried in the DatasetRow metadata instead.
     """
     dataset_id = str(uuid4())
-    dest = path(dataset_id)
+    ext = Path(filename).suffix.lower()
+    if not ext:
+        ext = ".csv" if (source_kind in (None, "csv")) else f".{source_kind}"
+    dest = _uploads_dir() / f"{dataset_id}{ext}"
     dest.write_bytes(upload_bytes)
     return dataset_id
 
 
 def load_df(dataset_id: str) -> pd.DataFrame:
-    """Read the FULL csv into a DataFrame. The ONLY full-file read; called
-    exclusively by the local executor."""
-    p = path(dataset_id)
-    if not p.exists():
-        raise FileNotFoundError(f"Dataset {dataset_id} not found at {p}")
-    return pd.read_csv(p)
+    """Read the FULL file into a DataFrame, dispatching on its extension. The
+    ONLY full-file read; called exclusively by the local executor/export."""
+    p = _find_file(dataset_id)
+    if p is None:
+        raise FileNotFoundError(f"Dataset {dataset_id} not found in {_uploads_dir()}")
+    kind = loaders.kind_for_extension(p.suffix) or "csv"
+    return loaders.load_dataframe(p, kind)
 
 
 def _cap_cell(value: object, cap: int) -> object:

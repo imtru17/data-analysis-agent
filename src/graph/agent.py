@@ -2,6 +2,7 @@ from langgraph.graph import StateGraph, END
 
 from graph.state import AgentState
 from graph.nodes import (
+    select_sources,
     plan,
     generate_code,
     execute_locally,
@@ -12,7 +13,7 @@ from graph.nodes import (
     handle_error,
 )
 from graph.edges import (
-    entry_router,
+    after_select,
     after_plan,
     after_generate,
     after_execute,
@@ -24,6 +25,7 @@ from graph.edges import (
 def _build_graph():
     g = StateGraph(AgentState)
     for name, fn in [
+        ("select_sources", select_sources),
         ("plan", plan),
         ("generate_code", generate_code),
         ("execute_locally", execute_locally),
@@ -35,9 +37,10 @@ def _build_graph():
     ]:
         g.add_node(name, fn)
 
-    g.set_conditional_entry_point(
-        entry_router,
-        {"plan": "plan", "generate_code": "generate_code"},
+    g.set_entry_point("select_sources")
+    g.add_conditional_edges(
+        "select_sources", after_select,
+        {"handle_error": "handle_error", "plan": "plan", "generate_code": "generate_code"},
     )
     g.add_conditional_edges(
         "plan", after_plan,

@@ -16,7 +16,7 @@
 | Live step-by-step streaming | [live-step-streaming.md](live-step-streaming.md) |
 | Persist run history (audit trail) | [persist-run-history.md](persist-run-history.md) |
 
-### Deferred (later phases — shipped as labelled stubs in Phase 1)
+### Phase 2 (built)
 
 | Capability | Phase |
 |-----------|-------|
@@ -24,11 +24,16 @@
 | Interactive, downloadable charts (auto/user-requested) | 2 |
 | Per-query token/cost + running daily total | 2 |
 | Exports: cleaned dataset (CSV/Parquet), code, shareable report | 2 |
-| Live DB connections (Postgres/MySQL/SQLite) with SQL pushdown/sampling | 3 |
-| Non-CSV formats (Excel/JSON/Parquet/PDF/log) | 3 |
-| Persistent cross-day sessions + conversation memory | 3 |
-| Column/business annotations | 3 |
-| Multi-source auto-pick / join / compare | 3 |
+
+### Phase 3 (final phase — wires the remaining stubs)
+
+| Capability | File |
+|-----------|------|
+| Live DB connections (Postgres/MySQL/SQLite) with SQL pushdown/sampling | [db-connection.md](db-connection.md) |
+| Non-CSV formats (Excel/JSON/Parquet/PDF/log) | [non-csv-formats.md](non-csv-formats.md) |
+| Persistent cross-day sessions + conversation memory | [sessions-memory.md](sessions-memory.md) |
+| Column/business annotations | [annotations.md](annotations.md) |
+| Multi-source auto-pick / join / compare | [multi-source-join.md](multi-source-join.md) |
 
 ## How to Add a New Capability
 

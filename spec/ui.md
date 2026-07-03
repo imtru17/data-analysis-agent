@@ -27,26 +27,30 @@ Chat interface — a single-page Next.js 15 static export (React 19 + Tailwind 4
 
 **Actions available:** upload a CSV; type + send a question; expand/collapse the code panel; copy the code.
 
-### Labelled NON-FUNCTIONAL Stubs (Phase 1)
+### Phase 2 surfaces (built — replaced the Phase-1 stubs)
 
-Every future feature is visible but unmistakably inert, so it reads as "coming soon", never as a bug. Marking convention (applied to all): reduced opacity (`opacity-60`), a small **"Soon"** pill badge, `cursor-not-allowed`, `aria-disabled`, and a tooltip **"Coming soon — arrives in a later phase."** Clicking does nothing (no request, no error).
+Charts (zoomable + PNG/SVG download), Exports/Report menu, per-answer token/cost badge + header "Today: $x" total, and the auto-profile card + clickable follow-up chips are all **real** since Phase 2.
 
-| Stub | Where | Marked as |
-|------|-------|-----------|
-| **Charts** | A "📊 Chart" toggle on the composer / an empty "Charts appear here (soon)" card under answers | disabled toggle + Soon pill |
-| **Exports / Report** | An "Export ▾" menu in the answer toolbar (CSV, Parquet, Code, Report items) | disabled menu, Soon pill |
-| **Connect DB** | "Connect database" button in the right rail | disabled card, Soon pill |
-| **Add source / multi-source** | "+ Add source" button near the upload control | disabled, Soon pill |
-| **Auto-profile insights + follow-ups** | "Suggested questions (soon)" placeholder chips under the profile message | greyed non-clickable chips |
-| **Cost / token + daily total** | Header "Today: —" badge + per-answer "tokens/cost —" caption | greyed placeholder text |
-| **Sessions / history browser** | "History" button in the header opening a disabled panel "Your past sessions (soon)" | disabled, Soon pill |
-| **Non-CSV upload** | Upload control shows accepted types "CSV now · Excel/JSON/Parquet/PDF/logs soon" | helper text, non-CSV rejected with a friendly message |
+### Phase 3 surfaces (final phase — these REPLACE the remaining Phase-1 stubs)
 
-The right-rail "Coming soon" panel restates these so the user sees the full vision at a glance.
+By end of Phase 3 **no Phase-1 stub remains**; every "Coming soon" card becomes a working surface. The right-rail "Coming soon" panel is retired.
+
+| Surface | Where | Behaviour |
+|---------|-------|-----------|
+| **Connect DB dialog** (`ConnectDb.tsx`) | "Connect database" in the source area opens a modal: name, dialect (Postgres/MySQL/SQLite), connection string | `POST /connections`; on success shows the source with its introspected tables. The DSN field is write-only — the UI never displays the entered credentials back; the source chip shows the **masked** DSN. |
+| **Non-CSV upload** (extends upload control) | Upload accepts `.csv/.xlsx/.json/.parquet/.pdf/.log/.txt` | `POST /datasets`; helper text now reads "CSV · Excel · JSON · Parquet · PDF · logs". A format with no clean table shows the friendly server reason inline (not a crash). |
+| **Multi-source panel + source picker** (`SourcePanel.tsx`) | A panel listing loaded sources (files + connections); the composer gains a source picker (multi-select) | Selected `source_ids` are sent with `POST /analyses`. Default: all in-session sources are candidates and `select_sources` auto-picks; the user may pin specific ones. |
+| **Session / history browser** (`SessionBrowser.tsx`) | "History" in the header opens a real panel of recent sessions | `GET /sessions`; clicking a session calls `GET /sessions/{id}` and restores its datasets, connections, conversation thread, and annotations — across days. |
+| **Annotation editor** (`AnnotationEditor.tsx`) | Inline "✎" on any column in the schema/profile table (file or DB source/table) | `PUT .../annotation`; the saved note shows under the column and is used by the agent on the next ask. |
+
+**Multi-turn thread:** the message thread is now a persistent conversation — follow-ups ("and by month?") resolve against prior turns, and reopening a session restores the full thread with each answer's code/chart/trace.
+
+**Anything still a stub:** nothing from the Phase-1 vision. (No auth/multi-user by design — that is out-of-scope in `spec/roadmap.md`, not a stub.)
 
 ## Error States
 
-- **Upload rejected** (non-CSV / too large / unparseable) → an inline system message in the thread: "Couldn't read that file: <reason>. Phase 1 supports CSV up to 500 MB." (not a stub — a real, friendly validation message).
+- **Upload rejected** (unsupported type / too large / unparseable / no table in a PDF) → an inline system message in the thread with the friendly server reason (e.g. "Couldn't find a table in that PDF — try CSV/Excel/Parquet."). Phase 3 accepts CSV/Excel/JSON/Parquet/PDF/logs up to the size limit.
+- **DB connect failed** (Phase 3) → the Connect dialog shows the server reason (unreachable / bad DSN / unsupported dialect) — **the message never echoes the connection string**.
 - **No dataset yet** → composer disabled with the "Upload a CSV to start" hint.
 - **Analysis in flight** → step chips animate; composer disabled until `done`/`error`.
 - **Agent error** (SSE `error` event) → the in-flight step chip turns red and an agent message shows the message + a "Try rephrasing" hint. The failed run is still in history.
@@ -56,6 +60,10 @@ The right-rail "Coming soon" panel restates these so the user sees the full visi
 ## E2E Tests
 
 `frontend/tests/e2e/analysis.spec.ts` (Playwright, required Phase-1 deliverable): drives the built app against a running server — uploads a small CSV, sends a question, asserts the step chips appear, asserts a non-empty answer renders, and asserts the code panel reveals code. Config in `frontend/playwright.config.ts`. This is part of the Phase-1 gate (not an HTTP-200 check).
+
+`frontend/tests/e2e/insight.spec.ts` (Phase 2): profile card + follow-up chips, chart render + download, cost badge/today total, export menu.
+
+`frontend/tests/e2e/sources.spec.ts` (Phase 3, required): connects a **local SQLite** DB source (a seeded file, no external credentials), asks a question that pushes SQL down and returns an answer; uploads a non-CSV (Parquet or Excel) and asks; runs a multi-source compare across the file + the DB; adds a column annotation and confirms it persists; reopens a session from the history browser and asserts the prior thread is restored. Part of the Phase-3 gate.
 
 ## Tech Stack
 

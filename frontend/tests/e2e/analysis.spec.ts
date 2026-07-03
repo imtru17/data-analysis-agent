@@ -70,17 +70,25 @@ test('upload a CSV, ask a question, watch steps, read the answer, inspect the co
   expect(code).toContain('result')
 })
 
-test('still-deferred stubs are visibly inert, not broken', async ({ page }) => {
+test('the former Phase-1 stubs are now real, functional surfaces', async ({ page }) => {
   await page.goto('/app/')
 
-  // History remains a labelled stub (Phase 3). The "Today:" cost is now REAL.
-  await expect(page.getByTestId('history-button')).toHaveAttribute('aria-disabled', 'true')
+  // History / Sessions is now a REAL, enabled button (no longer a stub).
+  const sessions = page.getByTestId('sessions-button')
+  await expect(sessions).toBeVisible()
+  await expect(sessions).not.toHaveAttribute('aria-disabled', 'true')
 
-  // The right-rail coming-soon panel restates the remaining Phase-3 roadmap.
-  await expect(page.getByTestId('coming-soon-rail')).toBeVisible()
-  await expect(page.getByTestId('rail-connect-db')).toHaveAttribute('aria-disabled', 'true')
+  // The right-rail "Coming soon" panel is retired — a real Sources panel is shown.
+  await expect(page.getByTestId('coming-soon-rail')).toHaveCount(0)
+  await expect(page.getByTestId('source-panel')).toBeVisible()
 
-  // Every Soon pill carries the marking; the add-source stub is disabled.
-  await expect(page.getByTestId('add-source')).toBeDisabled()
-  expect(await page.getByTestId('soon-pill').count()).toBeGreaterThan(0)
+  // "+ Add source" is now a real, enabled control that reveals real actions.
+  const addSource = page.getByTestId('add-source')
+  await expect(addSource).toBeEnabled()
+  await addSource.click()
+  await expect(page.getByTestId('connect-db-button')).toBeVisible()
+  await expect(page.getByTestId('add-source-upload')).toBeVisible()
+
+  // No "Soon" stub pills remain anywhere.
+  await expect(page.getByTestId('soon-pill')).toHaveCount(0)
 })

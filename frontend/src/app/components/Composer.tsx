@@ -71,7 +71,7 @@ export function Composer({
             }}
             disabled={disabled}
             rows={1}
-            placeholder={hasDataset ? 'Ask a question about your data…' : 'Upload a CSV to start'}
+            placeholder={hasDataset ? 'Ask a question about your data…' : 'Add a source to start'}
             className="max-h-40 w-full resize-none rounded-lg border border-gray-300 px-3 py-2.5 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
           />
         </div>
@@ -88,7 +88,7 @@ export function Composer({
       </div>
       {!hasDataset && (
         <p className="mt-1.5 px-1 text-xs text-gray-400" data-testid="composer-hint">
-          Upload a CSV to start asking questions.
+          Upload a file or connect a database to start asking questions.
         </p>
       )}
     </div>

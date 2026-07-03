@@ -26,11 +26,22 @@ def test_upload_csv_returns_profile(api_client):
     assert data["dataset_id"]
 
 
-def test_upload_non_csv_rejected(api_client):
-    files = {"file": ("notes.txt", b"hello", "text/plain")}
+def test_upload_unsupported_extension_rejected(api_client):
+    # Phase 3 supports .csv/.xlsx/.json/.parquet/.pdf/.log/.txt (see
+    # tests/unit/test_loaders.py for the non-CSV formats); an extension with
+    # no matching loader is still rejected.
+    files = {"file": ("notes.exe", b"hello", "application/octet-stream")}
     r = api_client.post("/datasets", files=files)
     assert r.status_code == 400
     assert r.json()["detail"]["code"] == "BAD_REQUEST"
+
+
+def test_upload_txt_log_accepted_as_log_source(api_client):
+    files = {"file": ("notes.txt", b"line one\nline two\n", "text/plain")}
+    r = api_client.post("/datasets", files=files)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["row_count"] == 2
 
 
 def test_upload_empty_file_rejected(api_client):

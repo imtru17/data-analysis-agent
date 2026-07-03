@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     # On-disk uploaded-file store.
     uploads_dir: str = Field(default="./data/uploads")
 
+    # ── Phase 3 — sources, memory, DB pushdown ───────────────────────────
+    # How many prior conversation turns (question + answer) are fed back to the
+    # LLM nodes for a session (privacy-safe prose only — never raw rows).
+    memory_turns: int = Field(default=8)
+    # Safety cap wrapped around any generated read-only SQL so a stray SELECT *
+    # cannot pull a whole DB table into memory.
+    sql_max_rows: int = Field(default=100_000)
+
 
 _settings: Settings | None = None
 

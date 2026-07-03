@@ -1,6 +1,7 @@
 'use client'
 
 import type { ColumnProfile, DatasetProfile } from '@/lib/api'
+import { AnnotationEditor } from './AnnotationEditor'
 
 // System message rendered after a successful upload. Phase 2 turns this into a
 // real insight surface: the richer per-column profile (null %, distinct count,
@@ -13,9 +14,18 @@ interface ProfileMessageProps {
   profile: DatasetProfile
   onFollowup?: (question: string) => void
   followupsDisabled?: boolean
+  /** Phase-3: restored annotations keyed by column name. */
+  annotations?: Record<string, string>
+  onNetworkError?: () => void
 }
 
-export function ProfileMessage({ profile, onFollowup, followupsDisabled }: ProfileMessageProps) {
+export function ProfileMessage({
+  profile,
+  onFollowup,
+  followupsDisabled,
+  annotations,
+  onNetworkError,
+}: ProfileMessageProps) {
   const columnNames = profile.columns.map(c => c.name)
   const followups = profile.followups ?? []
 
@@ -47,6 +57,7 @@ export function ProfileMessage({ profile, onFollowup, followupsDisabled }: Profi
                 <th className="px-3 py-1.5 font-medium">Min</th>
                 <th className="px-3 py-1.5 font-medium">Max</th>
                 <th className="px-3 py-1.5 font-medium">Mean</th>
+                <th className="px-3 py-1.5 font-medium">Business note</th>
               </tr>
             </thead>
             <tbody>
@@ -59,6 +70,14 @@ export function ProfileMessage({ profile, onFollowup, followupsDisabled }: Profi
                   <td className="px-3 py-1.5 text-gray-600">{valueOrDash(col.min)}</td>
                   <td className="px-3 py-1.5 text-gray-600">{valueOrDash(col.max)}</td>
                   <td className="px-3 py-1.5 text-gray-600">{meanOrDash(col.mean)}</td>
+                  <td className="px-3 py-1.5">
+                    <AnnotationEditor
+                      datasetId={profile.dataset_id}
+                      column={col.name}
+                      initialNote={annotations?.[col.name] ?? ''}
+                      onNetworkError={onNetworkError}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>

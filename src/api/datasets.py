@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from analysis import profile as profile_mod
 from analysis import store
+from analysis.sources.loaders import SUPPORTED_KINDS, LoaderError, kind_for_filename
 from api._common import api_error, ok
 from config.settings import get_settings
 from db.models import DatasetRow
@@ -24,11 +25,17 @@ router = APIRouter()
 @router.post("/datasets")
 async def upload_dataset(
     file: UploadFile = File(...),
+    session_id: str | None = Form(default=None),
     session: Session = Depends(get_session),
 ) -> dict:
     filename = file.filename or "upload.csv"
-    if not filename.lower().endswith(".csv"):
-        raise api_error("BAD_REQUEST", "Only .csv files are supported in Phase 1.", 400)
+    kind = kind_for_filename(filename)
+    if kind is None:
+        raise api_error(
+            "BAD_REQUEST",
+            f"Unsupported file type. Supported: {', '.join(SUPPORTED_KINDS)}",
+            400,
+        )
 
     raw = await file.read()
     if not raw:
@@ -42,16 +49,21 @@ async def upload_dataset(
             413,
         )
 
-    dataset_id = store.save(raw, filename)
+    dataset_id = store.save(raw, filename, source_kind=kind)
     try:
         meta = store.profile(dataset_id, filename=filename)
-    except Exception as exc:  # noqa: BLE001 — unparseable CSV
-        # remove the saved file so no orphan/unparseable dataset lingers
+    except LoaderError as exc:
         try:
             store.path(dataset_id).unlink(missing_ok=True)
         except OSError:
             pass
-        raise api_error("BAD_REQUEST", f"Could not parse CSV: {exc}", 400)
+        raise api_error("BAD_REQUEST", str(exc), 400)
+    except Exception as exc:  # noqa: BLE001 — unparseable file
+        try:
+            store.path(dataset_id).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise api_error("BAD_REQUEST", f"Could not parse file: {exc}", 400)
 
     # Rich per-column profile — computed LOCALLY, cached, never sent to the LLM.
     try:
@@ -62,12 +74,13 @@ async def upload_dataset(
     row = DatasetRow(
         id=dataset_id,
         filename=filename,
-        source_kind="csv",
-        file_path=f"{dataset_id}.csv",
+        source_kind=kind,
+        file_path=store.path(dataset_id).name,
         row_count=meta.row_count,
         schema_json=json.dumps([{"name": c.name, "dtype": c.dtype} for c in meta.columns]),
         sample_rows_json=json.dumps(meta.sample_rows, default=str),
         profile_json=json.dumps(rich_profile, default=str) if rich_profile else None,
+        session_id=session_id,
     )
     session.add(row)
 

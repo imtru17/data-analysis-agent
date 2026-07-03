@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   uploadDataset,
   fetchProfile,
@@ -9,9 +9,15 @@ import {
   type ColumnProfile,
   type DatasetProfile,
 } from '@/lib/api'
-import { SoonPill } from './Stub'
 
 const MAX_UPLOAD_MB = 500
+
+// Phase 3: accept CSV plus Excel / JSON / Parquet / PDF / log / text. Client-side
+// we only gate on extension + size; the backend does the real parse and returns a
+// friendly reason for a format with no clean table.
+const ACCEPTED_EXTS = ['.csv', '.xlsx', '.xls', '.json', '.parquet', '.pdf', '.log', '.txt']
+const ACCEPT_ATTR = '.csv,.xlsx,.xls,.json,.parquet,.pdf,.log,.txt'
+const FORMATS_LABEL = 'CSV · Excel · JSON · Parquet · PDF · logs'
 
 interface UploadControlProps {
   onUploading: (busy: boolean) => void
@@ -20,12 +26,14 @@ interface UploadControlProps {
   onNetworkError: () => void
   busy: boolean
   hasDataset: boolean
+  /** Lets the parent (source panel "+ Add source") open the file picker. */
+  onReady?: (open: () => void) => void
 }
 
-// Real Phase-1 upload control: CSV file input + drag-drop, with real client-side
-// validation. Non-CSV / too-large files are rejected with a friendly inline
-// message; parse failures surface the backend's message. "+ Add source" is a
-// labelled stub.
+// Real Phase-3 upload control: file input + drag-drop accepting many formats,
+// with client-side extension/size validation. Unsupported / too-large files are
+// rejected with a friendly inline message; server parse failures surface the
+// backend's friendly reason inline (never a crash).
 
 export function UploadControl({
   onUploading,
@@ -34,21 +42,28 @@ export function UploadControl({
   onNetworkError,
   busy,
   hasDataset,
+  onReady,
 }: UploadControlProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
 
+  // Register the file-picker opener so external triggers ("+ Add source") work.
+  useEffect(() => {
+    onReady?.(() => inputRef.current?.click())
+  }, [onReady])
+
   async function handleFile(file: File) {
     const name = file.name.toLowerCase()
-    if (!name.endsWith('.csv')) {
+    const ok = ACCEPTED_EXTS.some(ext => name.endsWith(ext))
+    if (!ok) {
       onReject(
-        `Couldn't read that file: "${file.name}" isn't a CSV. Phase 1 supports CSV up to ${MAX_UPLOAD_MB} MB.`,
+        `Couldn't read that file: "${file.name}" isn't a supported format. Supported: ${FORMATS_LABEL} (up to ${MAX_UPLOAD_MB} MB).`,
       )
       return
     }
     if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
       onReject(
-        `Couldn't read that file: it's larger than ${MAX_UPLOAD_MB} MB. Phase 1 supports CSV up to ${MAX_UPLOAD_MB} MB.`,
+        `Couldn't read that file: it's larger than ${MAX_UPLOAD_MB} MB. Supported: ${FORMATS_LABEL}.`,
       )
       return
     }
@@ -56,7 +71,7 @@ export function UploadControl({
     onUploading(true)
     try {
       const profile = await uploadDataset(file)
-      // Phase 2: enrich with the richer per-column stats + follow-up suggestions.
+      // Enrich with the richer per-column stats + follow-up suggestions.
       // If the profile endpoint is unavailable the basic profile still renders.
       const rich = await fetchProfile(profile.dataset_id)
       if (rich) {
@@ -71,9 +86,10 @@ export function UploadControl({
       if (err instanceof NetworkError) {
         onNetworkError()
       } else if (err instanceof ApiError) {
-        onReject(`Couldn't read that file: ${err.message}. Phase 1 supports CSV up to ${MAX_UPLOAD_MB} MB.`)
+        // The server returns a friendly reason (e.g. "no table found in that PDF").
+        onReject(`Couldn't read that file: ${err.message}`)
       } else {
-        onReject('Couldn\'t read that file: an unexpected error occurred.')
+        onReject("Couldn't read that file: an unexpected error occurred.")
       }
     } finally {
       onUploading(false)
@@ -98,26 +114,14 @@ export function UploadControl({
     <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-          {hasDataset ? 'Dataset loaded' : 'Load a dataset'}
+          {hasDataset ? 'Add another source' : 'Load a dataset'}
         </span>
-        <button
-          type="button"
-          aria-disabled="true"
-          disabled
-          title="Coming soon — arrives in a later phase."
-          data-testid="add-source"
-          onClick={e => e.preventDefault()}
-          className="flex cursor-not-allowed items-center gap-1.5 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-500 opacity-60"
-        >
-          + Add source
-          <SoonPill />
-        </button>
       </div>
 
       <div
         role="button"
         tabIndex={0}
-        aria-label="Upload a CSV file"
+        aria-label="Upload a data file"
         data-testid="upload-dropzone"
         onClick={() => !busy && inputRef.current?.click()}
         onKeyDown={e => {
@@ -139,7 +143,7 @@ export function UploadControl({
         <input
           ref={inputRef}
           type="file"
-          accept=".csv,text/csv"
+          accept={ACCEPT_ATTR}
           className="hidden"
           data-testid="file-input"
           onChange={onInputChange}
@@ -153,10 +157,10 @@ export function UploadControl({
         ) : (
           <>
             <span className="text-sm font-medium text-gray-700">
-              Drop a CSV here, or click to browse
+              Drop a file here, or click to browse
             </span>
-            <span className="mt-1 text-xs text-gray-400">
-              CSV now · Excel/JSON/Parquet/PDF/logs soon
+            <span className="mt-1 text-xs text-gray-400" data-testid="upload-formats">
+              {FORMATS_LABEL}
             </span>
           </>
         )}

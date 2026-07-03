@@ -13,6 +13,8 @@ export interface ProfileMsg {
   id: string
   kind: 'profile'
   profile: DatasetProfile
+  /** Phase-3: restored column annotations, keyed by column name. */
+  annotations?: Record<string, string>
 }
 
 export interface SystemMsg {

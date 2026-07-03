@@ -89,22 +89,22 @@ test('the Chart toggle + a grouped question renders a downloadable chart', async
   await expect(agent.getByTestId('chart-download-svg')).toBeVisible()
 })
 
-test('right rail keeps only the still-deferred Phase-3 stubs', async ({ page }) => {
+test('the coming-soon rail is retired for a real Sources panel', async ({ page }) => {
   await page.goto('/app/')
 
-  await expect(page.getByTestId('coming-soon-rail')).toBeVisible()
-  // Still deferred:
-  await expect(page.getByTestId('rail-connect-db')).toBeVisible()
-  await expect(page.getByTestId('rail-multi-source')).toBeVisible()
-  await expect(page.getByTestId('rail-sessions')).toBeVisible()
-  await expect(page.getByTestId('rail-formats')).toBeVisible()
-  // Now-real features removed from the rail:
-  await expect(page.getByTestId('rail-charts')).toHaveCount(0)
-  await expect(page.getByTestId('rail-exports')).toHaveCount(0)
-  await expect(page.getByTestId('rail-profile')).toHaveCount(0)
-  await expect(page.getByTestId('rail-cost')).toHaveCount(0)
+  // Phase 3: the "Coming soon" rail is gone; a real multi-source panel replaces it.
+  await expect(page.getByTestId('coming-soon-rail')).toHaveCount(0)
+  const panel = page.getByTestId('source-panel')
+  await expect(panel).toBeVisible()
+  await expect(panel).toContainText('Sources')
 
-  // The header "Today:" total is now real (not a disabled stub).
+  // No now-real features remain as rail stubs.
+  await expect(page.getByTestId('rail-connect-db')).toHaveCount(0)
+  await expect(page.getByTestId('rail-multi-source')).toHaveCount(0)
+  await expect(page.getByTestId('rail-sessions')).toHaveCount(0)
+  await expect(page.getByTestId('rail-formats')).toHaveCount(0)
+
+  // The header "Today:" total is real (not a disabled stub).
   const today = page.getByTestId('today-cost')
   await expect(today).not.toHaveAttribute('aria-disabled', 'true')
   await expect(today).toContainText('Today:')

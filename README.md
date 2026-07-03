@@ -179,6 +179,47 @@ plain-language answer, and a collapsible panel with the exact pandas code.
   generated pandas; `report` is a self-contained HTML report with the answer, result
   table, and an embedded Vega-Lite chart when one exists.
 
+### Key endpoints (Phase 3 — final phase)
+
+- `POST /connections` — `{name, kind: postgresql|mysql|sqlite, dsn, session_id?}`; introspects
+  schema + a bounded sample, stores the DSN **only** in the local SQLite DB, and returns a
+  **masked** DSN (`dsn_masked`) — the raw DSN is never echoed, logged, or sent to the LLM.
+  Install `uv sync --extra db` for Postgres/MySQL drivers (SQLite needs no extra).
+- `GET /connections` — masked connection list.
+- `POST /datasets` now also accepts `.xlsx/.json/.parquet/.pdf/.log/.txt` (dispatched by
+  extension to `src/analysis/sources/loaders.py`); a format with no clean table (e.g. a PDF
+  with no detectable table) degrades to a friendly `400 BAD_REQUEST`, never a crash.
+- `GET /sessions`, `POST /sessions`, `GET /sessions/{id}` — a persistent cross-day workspace:
+  its loaded datasets/connections (masked), its conversation thread, and its column
+  annotations. Pass `session_id` on `POST /analyses` to thread a run into a session; the last
+  `AGENT_MEMORY_TURNS` prior turns (question + the agent's own answer prose — never raw rows)
+  are fed back to the LLM nodes for follow-ups.
+- `PUT /datasets/{id}/columns/{col}/annotation` and
+  `PUT /connections/{id}/tables/{table}/columns/{col}/annotation` — upsert a user note about a
+  column's business meaning; it flows into the agent's LLM context via the same privacy choke
+  point (`analysis.privacy`).
+- `POST /analyses` now also accepts `source_ids: [dataset_or_connection_id, ...]` — one ask can
+  span multiple files and/or DB connections. The `select_sources` graph node auto-picks/plans a
+  join; `generate_code` emits pandas (file) or read-only SQL (DB) per source plus a local
+  pandas combine snippet; `execute_locally` runs each source's code against its own source
+  (file → local pandas on the full DataFrame, DB → SQL **pushed down** inside the database) and
+  combines the already-bounded per-source intermediates locally — a full DB table never leaves
+  the database, and only bounded intermediates ever combine.
+
+**Try a live DB connection with no external credentials** — seed a small local SQLite example DB:
+
+```bash
+uv run python scripts/seed_example_db.py
+```
+
+This prints the exact DSN to paste into "Connect database" in the app, e.g.:
+
+```
+sqlite:///C:/path/to/repo/data/examples/sample.db
+```
+
+(`./data/` is git-ignored; the seeder script is committed, the `.db` file is not.)
+
 ### Environment variables (`AGENT_` prefix)
 
 | Var | Default | Purpose |
@@ -192,6 +233,8 @@ plain-language answer, and a collapsible panel with the exact pandas code.
 | `AGENT_MAX_RETRIES` | `3` | Refine loops before best-guess-with-flag |
 | `AGENT_MAX_UPLOAD_MB` | `500` | Reject uploads larger than this |
 | `AGENT_UPLOADS_DIR` | `./data/uploads` | On-disk raw-file store (git-ignored) |
+| `AGENT_MEMORY_TURNS` | `8` | Prior conversation turns (question+answer) fed back per session |
+| `AGENT_SQL_MAX_ROWS` | `100000` | Safety `LIMIT` wrapped around any generated read-only SQL |
 
 Set `LANGCHAIN_TRACING_V2=true` (+ `LANGCHAIN_API_KEY`) to enable LangSmith
 tracing; otherwise tracing is a no-op and each run is logged to stdout.

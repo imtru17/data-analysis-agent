@@ -231,3 +231,57 @@ def run_code(code: str, df: pd.DataFrame) -> ExecResult:
         )
 
     return ExecResult(ok=True, result_summary=_summarize(result), stdout=stdout)
+
+
+# Public alias — Phase 3 nodes summarize an already-computed intermediate
+# (e.g. a DB pushdown result) without re-running code.
+summarize_result = _summarize
+
+
+def run_combine(code: str, variables: dict[str, object]) -> ExecResult:
+    """Run a LOCAL pandas snippet that combines already-computed per-source
+    intermediates (Phase 3 multi-source). ``variables`` maps a safe variable
+    name to each source's already-bounded/aggregated intermediate (never a
+    full raw table — each per-source code block already reduced its data).
+    Same restricted namespace + static pre-check + wall-clock timeout as
+    ``run_code``; only additional globals are the given variables."""
+    rejection = static_check(code)
+    if rejection is not None:
+        return ExecResult(ok=False, error=rejection)
+
+    timeout = get_settings().exec_timeout
+
+    def _run() -> tuple[object, str]:
+        restricted_globals = {
+            "__builtins__": _SAFE_BUILTINS,
+            "pd": pd,
+            "np": np,
+            **variables,
+        }
+        local_ns: dict = {}
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            compiled = compile(code, "<combine_code>", "exec")
+            exec(compiled, restricted_globals, local_ns)  # noqa: S102 — restricted ns by design
+        result = local_ns.get("result", restricted_globals.get("result"))
+        return result, buf.getvalue()
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(_run)
+        result, stdout = future.result(timeout=timeout)
+    except FutureTimeout:
+        pool.shutdown(wait=False)
+        return ExecResult(
+            ok=False, error=f"Combine execution exceeded the {timeout}s wall-clock timeout."
+        )
+    except Exception as exc:  # noqa: BLE001 — surface any combine error to the refine loop
+        pool.shutdown(wait=False)
+        return ExecResult(ok=False, error=f"{type(exc).__name__}: {exc}")
+    else:
+        pool.shutdown(wait=False)
+
+    if result is None and "result" not in code:
+        return ExecResult(ok=False, stdout=stdout, error="Combine code did not assign to `result`.")
+
+    return ExecResult(ok=True, result_summary=_summarize(result), stdout=stdout)

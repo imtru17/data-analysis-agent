@@ -12,9 +12,15 @@ interface MessageThreadProps {
   messages: ChatMessage[]
   onFollowup?: (question: string) => void
   followupsDisabled?: boolean
+  onNetworkError?: () => void
 }
 
-export function MessageThread({ messages, onFollowup, followupsDisabled }: MessageThreadProps) {
+export function MessageThread({
+  messages,
+  onFollowup,
+  followupsDisabled,
+  onNetworkError,
+}: MessageThreadProps) {
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -30,7 +36,7 @@ export function MessageThread({ messages, onFollowup, followupsDisabled }: Messa
         <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-xl">
           📈
         </div>
-        <p className="text-sm font-medium text-gray-700">Upload a CSV to get started</p>
+        <p className="text-sm font-medium text-gray-700">Add a source to get started</p>
         <p className="mt-1 max-w-sm text-xs text-gray-400">
           Ask questions in plain English. The agent writes the pandas code and runs it
           locally — only the schema and a few sample rows ever reach the LLM.
@@ -47,6 +53,7 @@ export function MessageThread({ messages, onFollowup, followupsDisabled }: Messa
           message={msg}
           onFollowup={onFollowup}
           followupsDisabled={followupsDisabled}
+          onNetworkError={onNetworkError}
         />
       ))}
       <div ref={endRef} />
@@ -58,10 +65,12 @@ function MessageRow({
   message,
   onFollowup,
   followupsDisabled,
+  onNetworkError,
 }: {
   message: ChatMessage
   onFollowup?: (question: string) => void
   followupsDisabled?: boolean
+  onNetworkError?: () => void
 }) {
   if (message.kind === 'user') {
     return (
@@ -79,6 +88,8 @@ function MessageRow({
         profile={message.profile}
         onFollowup={onFollowup}
         followupsDisabled={followupsDisabled}
+        annotations={message.annotations}
+        onNetworkError={onNetworkError}
       />
     )
   }

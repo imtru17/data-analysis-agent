@@ -37,10 +37,20 @@ export function applyStep(
 
   let idx = chips.findIndex(c => c.key === stepKey)
 
-  // The "Charting" chip is conditional — it is inserted (after "Answering") only
-  // when a `chart_spec` step event actually arrives, so it never shows on the
-  // non-chart path. Once inserted it flips like any other chip.
+  // Two chips are conditional and inserted only when their SSE event arrives:
+  //   - `select_sources` ("Choosing sources") — multi-source path; shown FIRST.
+  //   - `chart_spec` ("Charting") — chart path; shown after "Answering".
+  // Neither appears on the paths where the backend omits the event.
   if (idx === -1) {
+    if (stepKey === 'select_sources') {
+      const existing = chips.findIndex(c => c.key === 'select_sources')
+      if (existing !== -1) {
+        const next = chips.map(c => ({ ...c }))
+        next[existing].status = mapped
+        return next
+      }
+      return [{ key: 'select_sources', label: 'Choosing sources', status: mapped }, ...chips.map(c => ({ ...c }))]
+    }
     if (stepKey !== 'chart_spec') return chips
     const withChart = chips.map(c => ({ ...c }))
     withChart.push({ key: 'chart_spec', label: 'Charting', status: mapped })

@@ -11,8 +11,22 @@ from graph.state import AgentState
 
 
 def entry_router(state: AgentState) -> str:
-    """Fast path: trivial asks skip `plan`."""
+    """Fast path: trivial asks skip `plan`. Kept for back-compat; the graph's
+    real entry point is now `select_sources` -> `after_select` (Phase 3)."""
     if is_trivial_question(state.get("question", ""), state.get("dataset_meta", {})):
+        return "generate_code"
+    return "plan"
+
+
+def after_select(state: AgentState) -> str:
+    """Phase-3 entry routing. Multi-source is never trivial; a single source
+    still gets the fast-path check against its (now-resolved) dataset_meta."""
+    if state.get("error"):
+        return "handle_error"
+    if state.get("is_multi_source"):
+        return "plan"
+    dataset_meta = state.get("dataset_meta") or {}
+    if is_trivial_question(state.get("question", ""), dataset_meta):
         return "generate_code"
     return "plan"
 

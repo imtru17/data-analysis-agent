@@ -3,13 +3,21 @@
 Creates an ``AnalysisRunRow`` (status ``running``) at start, streams a step
 event per node advance, and finalizes the row (``completed``/``failed``) at the
 end. Also exposes a non-streaming ``run_analysis`` helper for tests.
+
+Phase 3: optionally resolves multiple ``source_ids`` (files and/or DB
+connections) and an active ``session_id`` — loading bounded conversation
+memory + column annotations (both privacy-safe) into the initial state, and
+appending the turn to the session's message thread on completion.
 """
 from __future__ import annotations
 
 import json
 from collections.abc import Iterator
 
-from db.models import AnalysisRunRow, DatasetRow
+from analysis import annotations as ann_mod
+from analysis import sessions as sessions_mod
+from config.settings import get_settings
+from db.models import AnalysisRunRow, ConnectionRow, DatasetRow
 from db.session import create_db_session
 from graph.agent import agentic_ai
 from graph.state import AgentState
@@ -17,6 +25,7 @@ from observability.llm_log import log_run
 
 # node name → human label for the live trace
 _STEP_LABELS = {
+    "select_sources": "Selecting sources",
     "plan": "Planning",
     "generate_code": "Writing code",
     "execute_locally": "Running locally",
@@ -30,37 +39,71 @@ class DatasetNotFound(Exception):
     pass
 
 
-def _load_dataset_meta(dataset_id: str) -> dict:
-    with create_db_session() as session:
-        row = session.get(DatasetRow, dataset_id)
-        if row is None:
-            raise DatasetNotFound(dataset_id)
-        return {
-            "dataset_id": row.id,
-            "filename": row.filename,
-            "row_count": row.row_count,
-            "columns": json.loads(row.schema_json),
-            "sample_rows": json.loads(row.sample_rows_json),
-        }
+def _dataset_meta_from_row(row: DatasetRow) -> dict:
+    return {
+        "dataset_id": row.id,
+        "filename": row.filename,
+        "row_count": row.row_count,
+        "columns": json.loads(row.schema_json),
+        "sample_rows": json.loads(row.sample_rows_json),
+    }
 
 
-def _create_run_row(dataset_id: str, question: str) -> str:
-    with create_db_session() as session:
-        run = AnalysisRunRow(dataset_id=dataset_id, question=question, status="running")
-        session.add(run)
-        session.flush()
-        return run.id
+def _resolve_sources(session, source_ids: list[str]) -> list[dict]:
+    sources: list[dict] = []
+    for sid in source_ids:
+        ds = session.get(DatasetRow, sid)
+        if ds is not None:
+            sources.append(
+                {
+                    "source_id": ds.id,
+                    "kind": "file",
+                    "name": ds.filename,
+                    "row_count": ds.row_count,
+                    "columns": json.loads(ds.schema_json),
+                    "sample_rows": json.loads(ds.sample_rows_json),
+                }
+            )
+            continue
+        conn = session.get(ConnectionRow, sid)
+        if conn is not None:
+            tables = json.loads(conn.schema_json).get("tables", []) if conn.schema_json else []
+            sources.append(
+                {
+                    "source_id": conn.id,
+                    "kind": "db",
+                    "name": conn.name,
+                    "connection_id": conn.id,
+                    "tables": tables,
+                }
+            )
+            continue
+        raise DatasetNotFound(sid)
+    return sources
 
 
 def _initial_state(
-    run_id: str, dataset_id: str, question: str, dataset_meta: dict, want_chart: bool
+    run_id: str,
+    dataset_id: str,
+    question: str,
+    dataset_meta: dict | None,
+    want_chart: bool,
+    *,
+    sources: list[dict] | None = None,
+    session_id: str | None = None,
+    conversation: list[dict] | None = None,
+    annotations: list[dict] | None = None,
 ) -> AgentState:
     return {
         "run_id": run_id,
         "dataset_id": dataset_id,
+        "session_id": session_id or "",
         "question": question,
         "dataset_meta": dataset_meta,
         "want_chart": want_chart,
+        "sources": sources or [],
+        "conversation": conversation or [],
+        "annotations": annotations or [],
         "retry_count": 0,
         "low_confidence": False,
         "step_trace": [],
@@ -113,16 +156,66 @@ def _done_payload(run_id: str, state: AgentState) -> dict:
 
 
 def stream_analysis(
-    dataset_id: str, question: str, want_chart: bool = False
+    dataset_id: str,
+    question: str,
+    want_chart: bool = False,
+    *,
+    source_ids: list[str] | None = None,
+    session_id: str | None = None,
 ) -> Iterator[dict]:
     """Yield SSE event dicts: {"event": "step"|"done"|"error", "data": {...}}.
 
-    Raises ``DatasetNotFound`` before any event if the dataset is unknown, so
-    the API can return a JSON 400 before the stream opens.
+    Raises ``DatasetNotFound`` before any event if a dataset/source is
+    unknown, so the API can return a JSON 400 before the stream opens.
     """
-    dataset_meta = _load_dataset_meta(dataset_id)   # may raise DatasetNotFound
-    run_id = _create_run_row(dataset_id, question)
-    initial = _initial_state(run_id, dataset_id, question, dataset_meta, want_chart)
+    settings = get_settings()
+
+    with create_db_session() as session:
+        sources = _resolve_sources(session, source_ids) if source_ids else []
+
+        if sources:
+            dataset_meta = None  # resolved by the select_sources node
+        else:
+            ds_row = session.get(DatasetRow, dataset_id)
+            if ds_row is None:
+                raise DatasetNotFound(dataset_id)
+            dataset_meta = _dataset_meta_from_row(ds_row)
+
+        resolved_session_id = session_id
+        if resolved_session_id:
+            sess_row = sessions_mod.get_or_create(session, resolved_session_id)
+            resolved_session_id = sess_row.id
+
+        conversation = (
+            sessions_mod.load_conversation(session, resolved_session_id, settings.memory_turns)
+            if resolved_session_id
+            else []
+        )
+        ann_source_ids = source_ids or ([dataset_id] if dataset_id else [])
+        annotations = ann_mod.list_for_sources(session, ann_source_ids)
+
+        run = AnalysisRunRow(
+            dataset_id=dataset_id,
+            question=question,
+            status="running",
+            session_id=resolved_session_id,
+            source_ids_json=json.dumps(ann_source_ids),
+        )
+        session.add(run)
+        session.flush()
+        run_id = run.id
+
+    initial = _initial_state(
+        run_id,
+        dataset_id,
+        question,
+        dataset_meta,
+        want_chart,
+        sources=sources,
+        session_id=resolved_session_id,
+        conversation=conversation,
+        annotations=annotations,
+    )
 
     accumulated: AgentState = dict(initial)
     try:
@@ -163,6 +256,13 @@ def stream_analysis(
         cost_usd=accumulated.get("cost_usd", 0.0),
     )
 
+    if resolved_session_id and accumulated.get("status") == "completed":
+        with create_db_session() as session:
+            sessions_mod.append_message(session, resolved_session_id, "user", question, run_id)
+            sessions_mod.append_message(
+                session, resolved_session_id, "assistant", accumulated.get("answer", ""), run_id
+            )
+
     if accumulated.get("status") == "failed" or accumulated.get("error"):
         yield {
             "event": "error",
@@ -172,11 +272,20 @@ def stream_analysis(
         yield {"event": "done", "data": _done_payload(run_id, accumulated)}
 
 
-def run_analysis(dataset_id: str, question: str, want_chart: bool = False) -> dict:
+def run_analysis(
+    dataset_id: str,
+    question: str,
+    want_chart: bool = False,
+    *,
+    source_ids: list[str] | None = None,
+    session_id: str | None = None,
+) -> dict:
     """Non-streaming helper (used by integration tests). Returns the terminal
     payload dict, with an extra ``run_id`` key."""
     terminal: dict = {}
-    for event in stream_analysis(dataset_id, question, want_chart):
+    for event in stream_analysis(
+        dataset_id, question, want_chart, source_ids=source_ids, session_id=session_id
+    ):
         if event["event"] in ("done", "error"):
             terminal = event["data"]
     return terminal

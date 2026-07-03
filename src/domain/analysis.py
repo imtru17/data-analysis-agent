@@ -15,7 +15,9 @@ class DatasetProfile(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
-    dataset_id: str = Field(..., min_length=1)
+    dataset_id: str | None = None
+    source_ids: list[str] | None = None    # Phase 3 — multi-source (files and/or connections)
+    session_id: str | None = None          # Phase 3 — thread the run into a session's conversation
     question: str = Field(..., min_length=1)
     want_chart: bool = False
 

@@ -183,6 +183,202 @@ export async function fetchTodayCost(): Promise<TodayCost | null> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3: DB connections, sessions, annotations, multi-source.
+// ---------------------------------------------------------------------------
+
+/** A live SQL DB source. The raw DSN is NEVER returned — only `dsn_masked`. */
+export interface Connection {
+  connection_id: string
+  name: string
+  kind: string
+  dsn_masked: string
+  session_id?: string
+  tables?: { table: string; columns: Column[] }[]
+}
+
+/** Kinds a loaded source can take in the unified source panel. */
+export type SourceKind = 'file' | 'db'
+
+/** A unified loaded source (an uploaded file OR a DB connection). */
+export interface Source {
+  id: string
+  kind: SourceKind
+  name: string
+  /** A short secondary line: "10,432 rows · 4 cols" or the masked DSN. */
+  detail?: string
+}
+
+export interface SessionSummary {
+  session_id: string
+  title?: string
+  created_at?: string
+  updated_at?: string
+  dataset_count?: number
+  run_count?: number
+}
+
+export interface SessionMessage {
+  role: string
+  content: string
+  run_id?: string
+  created_at?: string
+}
+
+export interface SessionAnnotation {
+  source_id: string
+  table_name?: string | null
+  column: string
+  note: string
+}
+
+export interface SessionDetail {
+  session_id: string
+  title?: string
+  datasets?: DatasetProfile[]
+  connections?: Connection[]
+  messages?: SessionMessage[]
+  annotations?: SessionAnnotation[]
+}
+
+/** Register a live SQL DB source. POST /connections. The raw DSN is write-only. */
+export async function createConnection(input: {
+  name: string
+  kind: string
+  dsn: string
+  session_id?: string
+}): Promise<Connection> {
+  let res: Response
+  try {
+    res = await fetch('/connections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+  } catch {
+    throw new NetworkError()
+  }
+  if (!res.ok) throw await parseErrorEnvelope(res)
+  const body = (await res.json()) as { data: Connection; error: null }
+  return body.data
+}
+
+/** List registered DB connections (masked). GET /connections. */
+export async function fetchConnections(): Promise<Connection[]> {
+  try {
+    const res = await fetch('/connections')
+    if (!res.ok) return []
+    const body = (await res.json()) as { data: Connection[]; error: null }
+    return body.data ?? []
+  } catch {
+    return []
+  }
+}
+
+/** List recent sessions (newest first). GET /sessions. */
+export async function fetchSessions(): Promise<SessionSummary[]> {
+  try {
+    const res = await fetch('/sessions')
+    if (!res.ok) return []
+    const body = (await res.json()) as { data: SessionSummary[]; error: null }
+    return body.data ?? []
+  } catch {
+    return []
+  }
+}
+
+/** Create a session. POST /sessions. */
+export async function createSession(title?: string): Promise<SessionSummary> {
+  let res: Response
+  try {
+    res = await fetch('/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(title ? { title } : {}),
+    })
+  } catch {
+    throw new NetworkError()
+  }
+  if (!res.ok) throw await parseErrorEnvelope(res)
+  const body = (await res.json()) as { data: SessionSummary; error: null }
+  return body.data
+}
+
+/** Restore a session — its datasets, connections, thread, and annotations. */
+export async function fetchSession(sessionId: string): Promise<SessionDetail | null> {
+  try {
+    const res = await fetch(`/sessions/${encodeURIComponent(sessionId)}`)
+    if (!res.ok) return null
+    const body = (await res.json()) as { data: SessionDetail; error: null }
+    return body.data ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Fetch a completed run (used to restore code/trace for a session thread). */
+export async function fetchRun(runId: string): Promise<DoneEvent | null> {
+  try {
+    const res = await fetch(`/analyses/${encodeURIComponent(runId)}`)
+    if (!res.ok) return null
+    const body = (await res.json()) as { data: DoneEvent; error: null }
+    return body.data ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Upsert a column annotation for a FILE dataset source. */
+export async function saveDatasetAnnotation(
+  datasetId: string,
+  column: string,
+  note: string,
+): Promise<SessionAnnotation> {
+  let res: Response
+  try {
+    res = await fetch(
+      `/datasets/${encodeURIComponent(datasetId)}/columns/${encodeURIComponent(column)}/annotation`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note }),
+      },
+    )
+  } catch {
+    throw new NetworkError()
+  }
+  if (!res.ok) throw await parseErrorEnvelope(res)
+  const body = (await res.json()) as { data: SessionAnnotation; error: null }
+  return body.data
+}
+
+/** Upsert a column annotation for a DB connection table column. */
+export async function saveConnectionAnnotation(
+  connectionId: string,
+  table: string,
+  column: string,
+  note: string,
+): Promise<SessionAnnotation> {
+  let res: Response
+  try {
+    res = await fetch(
+      `/connections/${encodeURIComponent(connectionId)}/tables/${encodeURIComponent(
+        table,
+      )}/columns/${encodeURIComponent(column)}/annotation`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note }),
+      },
+    )
+  } catch {
+    throw new NetworkError()
+  }
+  if (!res.ok) throw await parseErrorEnvelope(res)
+  const body = (await res.json()) as { data: SessionAnnotation; error: null }
+  return body.data
+}
+
 export type ExportKind = 'csv' | 'parquet' | 'code' | 'report'
 
 /** Build the download URL for an analysis export (Phase 2). Origin-root path. */
@@ -252,10 +448,12 @@ export async function streamAnalysis(
   dataset_id: string,
   question: string,
   handlers: StreamHandlers,
-  options: { want_chart?: boolean } = {},
+  options: { want_chart?: boolean; source_ids?: string[]; session_id?: string } = {},
 ): Promise<void> {
   const body: Record<string, unknown> = { dataset_id, question }
   if (options.want_chart) body.want_chart = true
+  if (options.source_ids && options.source_ids.length > 0) body.source_ids = options.source_ids
+  if (options.session_id) body.session_id = options.session_id
 
   let res: Response
   try {
